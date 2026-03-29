@@ -12,7 +12,9 @@ import authRouter from "./routes/authRoutes.js";
 import userRouter from "./routes/userRoutes.js";
 import friendRouter from "./routes/friendRoutes.js";
 import conversationRouter from "./routes/conversationRoutes.js";
+import notificationRouter from "./routes/notificationRoutes.js";
 import { initSocket } from "./socket/socketHandler.js";
+import { setIO } from "./socket/socketInstance.js";
 
 dotenv.config();
 
@@ -21,10 +23,12 @@ const httpServer = createServer(app);
 
 const io = new SocketIOServer(httpServer, {
     cors: {
-        origin: ["http://localhost:5173", "https://craft-ui-phi.vercel.app"],
+        origin: ["http://localhost:5173"],
         credentials: true,
     },
 });
+
+setIO(io);
 
 app.use(express.json());
 app.use(
@@ -42,17 +46,16 @@ app.use(bodyParser.urlencoded({ limit: "50mb", extended: true }));
 const port = process.env.SERVER_PORT || 5000;
 connectDB();
 
-// ── Routes ──
 app.use("/api/v1/auth", authRouter);
 app.use("/api/v1/users", userRouter);
 app.use("/api/v1/friends", friendRouter);
 app.use("/api/v1/conversations", conversationRouter);
+app.use("/api/v1/notifications", notificationRouter);
 
 app.get("/health", (_req, res) => {
     res.status(200).send("OK");
 });
 
-// ── Socket.io ──
 initSocket(io);
 
 httpServer.listen(port, () => {

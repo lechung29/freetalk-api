@@ -5,19 +5,23 @@ import mongoose from "mongoose";
 import FriendRequests, { FriendRequestStatus } from "../../models/friendRequests/friendRequestModel.js";
 import Users, { IResponseStatus, IUserStatus } from "../../models/users/usersModel.js";
 import type { AuthenticatedRequest } from "../../middlewares/auth.js";
+import { emitToUser } from "../../socket/socketInstance.js";
 
 const objectIdRegex = /^[0-9a-fA-F]{24}$/;
 
+// ─── Helper: build notification payload ───────────────────────────────────────
+function buildNotification(type: string, title: string, body: string, data: Record<string, any> = {}) {
+    return { type, title, body, data, isRead: false, createdAt: new Date().toISOString() };
+}
+
 // POST /api/v1/friends/request/:receiverId
-// Gửi lời mời kết bạn
 const sendFriendRequest: RequestHandler = async (req: AuthenticatedRequest, res: Response) => {
     const senderId = req.user?.id;
     const { receiverId } = req.params;
 
-    if (!objectIdRegex.test(receiverId)) {
+    if (!objectIdRegex.test(receiverId || "")) {
         return res.status(400).send({ status: IResponseStatus.Error, message: "Invalid user ID" });
     }
-
     if (senderId === receiverId) {
         return res.status(400).send({ status: IResponseStatus.Error, message: "You cannot send a friend request to yourself" });
     }
@@ -28,7 +32,6 @@ const sendFriendRequest: RequestHandler = async (req: AuthenticatedRequest, res:
             return res.status(404).send({ status: IResponseStatus.Error, message: "User not found" });
         }
 
-        // Kiểm tra đã có request chưa (cả 2 chiều)
         const existing = await FriendRequests.findOne({
             $or: [
                 { sender: senderId, receiver: receiverId },
@@ -36,36 +39,38 @@ const sendFriendRequest: RequestHandler = async (req: AuthenticatedRequest, res:
             ],
         });
 
+        const sender = await Users.findById(senderId).select("-password -refreshToken").lean();
+
         if (existing) {
-            if (existing.status === FriendRequestStatus.Pending) {
-                return res.status(400).send({ status: IResponseStatus.Error, message: "Friend request already sent" });
-            }
             if (existing.status === FriendRequestStatus.Accepted) {
                 return res.status(400).send({ status: IResponseStatus.Error, message: "You are already friends" });
             }
-            // Declined → cho phép gửi lại bằng cách update
+            // Pending hoặc Declined → resend
             existing.sender = new mongoose.Types.ObjectId(senderId);
             existing.receiver = new mongoose.Types.ObjectId(receiverId);
             existing.status = FriendRequestStatus.Pending;
             await existing.save();
 
-            return res.status(200).send({
-                status: IResponseStatus.Success,
-                message: "Friend request sent",
-                data: existing,
-            });
+            // ── Emit cho receiver dù là resend ──
+            emitToUser(
+                receiverId || "",
+                "notification:new",
+                buildNotification("friend_request", "New Friend Request", `${sender?.username} sent you a friend request`, { requestId: existing._id.toString(), sender }),
+            );
+
+            return res.status(200).send({ status: IResponseStatus.Success, message: "Friend request sent", data: existing });
         }
 
-        const request = await FriendRequests.create({
-            sender: senderId,
-            receiver: receiverId,
-        });
+        const request = await FriendRequests.create({ sender: senderId, receiver: receiverId });
 
-        return res.status(201).send({
-            status: IResponseStatus.Success,
-            message: "Friend request sent",
-            data: request,
-        });
+        // ── Emit cho receiver ──
+        emitToUser(
+            receiverId || "",
+            "notification:new",
+            buildNotification("friend_request", "New Friend Request", `${sender?.username} sent you a friend request`, { requestId: request._id.toString(), sender }),
+        );
+
+        return res.status(201).send({ status: IResponseStatus.Success, message: "Friend request sent", data: request });
     } catch (error) {
         console.error("Send friend request error:", error);
         return res.status(500).send({ status: IResponseStatus.Error, message: "A system error occurred. Please try again later" });
@@ -73,26 +78,22 @@ const sendFriendRequest: RequestHandler = async (req: AuthenticatedRequest, res:
 };
 
 // PATCH /api/v1/friends/request/:requestId/accept
-// Chấp nhận lời mời kết bạn
 const acceptFriendRequest: RequestHandler = async (req: AuthenticatedRequest, res: Response) => {
     const userId = req.user?.id;
     const { requestId } = req.params;
 
-    if (!objectIdRegex.test(requestId)) {
+    if (!objectIdRegex.test(requestId || "")) {
         return res.status(400).send({ status: IResponseStatus.Error, message: "Invalid request ID" });
     }
 
     try {
         const request = await FriendRequests.findById(requestId);
-
         if (!request) {
             return res.status(404).send({ status: IResponseStatus.Error, message: "Friend request not found" });
         }
-
         if (request.receiver.toString() !== userId) {
             return res.status(403).send({ status: IResponseStatus.Error, message: "You are not allowed to accept this request" });
         }
-
         if (request.status !== FriendRequestStatus.Pending) {
             return res.status(400).send({ status: IResponseStatus.Error, message: "This request has already been responded to" });
         }
@@ -100,11 +101,16 @@ const acceptFriendRequest: RequestHandler = async (req: AuthenticatedRequest, re
         request.status = FriendRequestStatus.Accepted;
         await request.save();
 
-        return res.status(200).send({
-            status: IResponseStatus.Success,
-            message: "Friend request accepted",
-            data: request,
-        });
+        const accepter = await Users.findById(userId).select("-password -refreshToken").lean();
+
+        // ── Emit cho người gửi lời mời ban đầu ──
+        emitToUser(
+            request.sender.toString(),
+            "notification:new",
+            buildNotification("friend_request_accepted", "Friend Request Accepted", `${accepter?.username} accepted your friend request`, { accepter }),
+        );
+
+        return res.status(200).send({ status: IResponseStatus.Success, message: "Friend request accepted", data: request });
     } catch (error) {
         console.error("Accept friend request error:", error);
         return res.status(500).send({ status: IResponseStatus.Error, message: "A system error occurred. Please try again later" });
@@ -112,26 +118,22 @@ const acceptFriendRequest: RequestHandler = async (req: AuthenticatedRequest, re
 };
 
 // PATCH /api/v1/friends/request/:requestId/decline
-// Từ chối lời mời kết bạn
 const declineFriendRequest: RequestHandler = async (req: AuthenticatedRequest, res: Response) => {
     const userId = req.user?.id;
     const { requestId } = req.params;
 
-    if (!objectIdRegex.test(requestId)) {
+    if (!objectIdRegex.test(requestId || "")) {
         return res.status(400).send({ status: IResponseStatus.Error, message: "Invalid request ID" });
     }
 
     try {
         const request = await FriendRequests.findById(requestId);
-
         if (!request) {
             return res.status(404).send({ status: IResponseStatus.Error, message: "Friend request not found" });
         }
-
         if (request.receiver.toString() !== userId) {
             return res.status(403).send({ status: IResponseStatus.Error, message: "You are not allowed to decline this request" });
         }
-
         if (request.status !== FriendRequestStatus.Pending) {
             return res.status(400).send({ status: IResponseStatus.Error, message: "This request has already been responded to" });
         }
@@ -139,10 +141,16 @@ const declineFriendRequest: RequestHandler = async (req: AuthenticatedRequest, r
         request.status = FriendRequestStatus.Declined;
         await request.save();
 
-        return res.status(200).send({
-            status: IResponseStatus.Success,
-            message: "Friend request declined",
-        });
+        const decliner = await Users.findById(userId).select("-password -refreshToken").lean();
+
+        // ── Emit cho người gửi lời mời ──
+        emitToUser(
+            request.sender.toString(),
+            "notification:new",
+            buildNotification("friend_request_declined", "Friend Request Declined", `${decliner?.username} declined your friend request`, { decliner }),
+        );
+
+        return res.status(200).send({ status: IResponseStatus.Success, message: "Friend request declined" });
     } catch (error) {
         console.error("Decline friend request error:", error);
         return res.status(500).send({ status: IResponseStatus.Error, message: "A system error occurred. Please try again later" });
@@ -150,12 +158,11 @@ const declineFriendRequest: RequestHandler = async (req: AuthenticatedRequest, r
 };
 
 // DELETE /api/v1/friends/:friendId
-// Hủy kết bạn
 const removeFriend: RequestHandler = async (req: AuthenticatedRequest, res: Response) => {
     const userId = req.user?.id;
     const { friendId } = req.params;
 
-    if (!objectIdRegex.test(friendId)) {
+    if (!objectIdRegex.test(friendId || "")) {
         return res.status(400).send({ status: IResponseStatus.Error, message: "Invalid user ID" });
     }
 
@@ -174,10 +181,8 @@ const removeFriend: RequestHandler = async (req: AuthenticatedRequest, res: Resp
 
         await request.deleteOne();
 
-        return res.status(200).send({
-            status: IResponseStatus.Success,
-            message: "Friend removed successfully",
-        });
+
+        return res.status(200).send({ status: IResponseStatus.Success, message: "Friend removed successfully" });
     } catch (error) {
         console.error("Remove friend error:", error);
         return res.status(500).send({ status: IResponseStatus.Error, message: "A system error occurred. Please try again later" });
@@ -185,36 +190,38 @@ const removeFriend: RequestHandler = async (req: AuthenticatedRequest, res: Resp
 };
 
 // DELETE /api/v1/friends/request/:requestId/cancel
-// Hủy lời mời đã gửi (người gửi tự hủy)
+// Người gửi tự hủy — KHÔNG notify receiver
 const cancelFriendRequest: RequestHandler = async (req: AuthenticatedRequest, res: Response) => {
     const userId = req.user?.id;
     const { requestId } = req.params;
 
-    if (!objectIdRegex.test(requestId)) {
+    if (!objectIdRegex.test(requestId || "")) {
         return res.status(400).send({ status: IResponseStatus.Error, message: "Invalid request ID" });
     }
 
     try {
         const request = await FriendRequests.findById(requestId);
-
         if (!request) {
             return res.status(404).send({ status: IResponseStatus.Error, message: "Friend request not found" });
         }
-
         if (request.sender.toString() !== userId) {
             return res.status(403).send({ status: IResponseStatus.Error, message: "You are not allowed to cancel this request" });
         }
-
         if (request.status !== FriendRequestStatus.Pending) {
             return res.status(400).send({ status: IResponseStatus.Error, message: "This request has already been responded to" });
         }
 
         await request.deleteOne();
+        const canceller = await Users.findById(userId).select("-password -refreshToken").lean();
 
-        return res.status(200).send({
-            status: IResponseStatus.Success,
-            message: "Friend request cancelled",
-        });
+        // ── Emit cho người nhận ──
+        emitToUser(
+            request.receiver.toString(),
+            "notification:new",
+            buildNotification("friend_request_cancelled", "Friend Request Cancelled", `${canceller?.username} cancelled their friend request`, { canceller }),
+        );
+
+        return res.status(200).send({ status: IResponseStatus.Success, message: "Friend request cancelled" });
     } catch (error) {
         console.error("Cancel friend request error:", error);
         return res.status(500).send({ status: IResponseStatus.Error, message: "A system error occurred. Please try again later" });
@@ -222,7 +229,6 @@ const cancelFriendRequest: RequestHandler = async (req: AuthenticatedRequest, re
 };
 
 // GET /api/v1/friends
-// Lấy danh sách bạn bè
 const getFriends: RequestHandler = async (req: AuthenticatedRequest, res: Response) => {
     const userId = req.user?.id;
 
@@ -240,11 +246,7 @@ const getFriends: RequestHandler = async (req: AuthenticatedRequest, res: Respon
             return isSender ? r.receiver : r.sender;
         });
 
-        return res.status(200).send({
-            status: IResponseStatus.Success,
-            message: "Friends retrieved successfully",
-            data: friends,
-        });
+        return res.status(200).send({ status: IResponseStatus.Success, message: "Friends retrieved successfully", data: friends });
     } catch (error) {
         console.error("Get friends error:", error);
         return res.status(500).send({ status: IResponseStatus.Error, message: "A system error occurred. Please try again later" });
@@ -252,23 +254,13 @@ const getFriends: RequestHandler = async (req: AuthenticatedRequest, res: Respon
 };
 
 // GET /api/v1/friends/requests/incoming
-// Lấy các lời mời kết bạn đang chờ (nhận được)
 const getIncomingRequests: RequestHandler = async (req: AuthenticatedRequest, res: Response) => {
     const userId = req.user?.id;
 
     try {
-        const requests = await FriendRequests.find({
-            receiver: userId,
-            status: FriendRequestStatus.Pending,
-        })
-            .populate("sender", "-password -refreshToken")
-            .sort({ createdAt: -1 });
+        const requests = await FriendRequests.find({ receiver: userId, status: FriendRequestStatus.Pending }).populate("sender", "-password -refreshToken").sort({ createdAt: -1 });
 
-        return res.status(200).send({
-            status: IResponseStatus.Success,
-            message: "Incoming requests retrieved successfully",
-            data: requests,
-        });
+        return res.status(200).send({ status: IResponseStatus.Success, message: "Incoming requests retrieved successfully", data: requests });
     } catch (error) {
         console.error("Get incoming requests error:", error);
         return res.status(500).send({ status: IResponseStatus.Error, message: "A system error occurred. Please try again later" });
@@ -276,23 +268,13 @@ const getIncomingRequests: RequestHandler = async (req: AuthenticatedRequest, re
 };
 
 // GET /api/v1/friends/requests/outgoing
-// Lấy các lời mời kết bạn đã gửi đang chờ
 const getOutgoingRequests: RequestHandler = async (req: AuthenticatedRequest, res: Response) => {
     const userId = req.user?.id;
 
     try {
-        const requests = await FriendRequests.find({
-            sender: userId,
-            status: FriendRequestStatus.Pending,
-        })
-            .populate("receiver", "-password -refreshToken")
-            .sort({ createdAt: -1 });
+        const requests = await FriendRequests.find({ sender: userId, status: FriendRequestStatus.Pending }).populate("receiver", "-password -refreshToken").sort({ createdAt: -1 });
 
-        return res.status(200).send({
-            status: IResponseStatus.Success,
-            message: "Outgoing requests retrieved successfully",
-            data: requests,
-        });
+        return res.status(200).send({ status: IResponseStatus.Success, message: "Outgoing requests retrieved successfully", data: requests });
     } catch (error) {
         console.error("Get outgoing requests error:", error);
         return res.status(500).send({ status: IResponseStatus.Error, message: "A system error occurred. Please try again later" });
@@ -300,12 +282,11 @@ const getOutgoingRequests: RequestHandler = async (req: AuthenticatedRequest, re
 };
 
 // GET /api/v1/friends/status/:targetId
-// Kiểm tra trạng thái kết bạn với 1 người cụ thể
 const getFriendshipStatus: RequestHandler = async (req: AuthenticatedRequest, res: Response) => {
     const userId = req.user?.id;
     const { targetId } = req.params;
 
-    if (!objectIdRegex.test(targetId)) {
+    if (!objectIdRegex.test(targetId || "")) {
         return res.status(400).send({ status: IResponseStatus.Error, message: "Invalid user ID" });
     }
 
@@ -318,19 +299,12 @@ const getFriendshipStatus: RequestHandler = async (req: AuthenticatedRequest, re
         });
 
         if (!request) {
-            return res.status(200).send({
-                status: IResponseStatus.Success,
-                data: { status: "none", requestId: null },
-            });
+            return res.status(200).send({ status: IResponseStatus.Success, data: { status: "none", requestId: null } });
         }
 
         return res.status(200).send({
             status: IResponseStatus.Success,
-            data: {
-                status: request.status,
-                requestId: request._id,
-                isSender: request.sender.toString() === userId,
-            },
+            data: { status: request.status, requestId: request._id, isSender: request.sender.toString() === userId },
         });
     } catch (error) {
         console.error("Get friendship status error:", error);
@@ -338,14 +312,4 @@ const getFriendshipStatus: RequestHandler = async (req: AuthenticatedRequest, re
     }
 };
 
-export {
-    sendFriendRequest,
-    acceptFriendRequest,
-    declineFriendRequest,
-    removeFriend,
-    cancelFriendRequest,
-    getFriends,
-    getIncomingRequests,
-    getOutgoingRequests,
-    getFriendshipStatus,
-};
+export { sendFriendRequest, acceptFriendRequest, declineFriendRequest, removeFriend, cancelFriendRequest, getFriends, getIncomingRequests, getOutgoingRequests, getFriendshipStatus };

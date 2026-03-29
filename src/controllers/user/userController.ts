@@ -4,6 +4,54 @@ import type { Request, Response, RequestHandler } from "express";
 import Users, { IResponseStatus, IUserStatus } from "../../models/users/usersModel.js";
 import type { AuthenticatedRequest } from "../../middlewares/auth.js";
 
+const searchUsers: RequestHandler = async (req: AuthenticatedRequest, res: Response) => {
+    const { search } = req.query;
+    const requesterId = req.user?.id;
+
+    if (!requesterId) {
+        return res.status(401).send({
+            status: IResponseStatus.Error,
+            message: "Unauthorized",
+        });
+    }
+
+    if (!search || typeof search !== "string" || search.trim().length === 0) {
+        return res.status(400).send({
+            status: IResponseStatus.Error,
+            message: "Search query is required",
+        });
+    }
+
+    const escapeRegex = (text: string) => {
+        return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    };
+
+    const keyword = escapeRegex(search.trim());
+
+    try {
+        const users = await Users.find({
+            _id: { $ne: requesterId },
+            status: { $ne: IUserStatus.Deleted },
+            $or: [{ username: { $regex: keyword, $options: "i" } }, { email: { $regex: keyword, $options: "i" } }],
+        })
+            .select("-password -refreshToken")
+            .limit(20)
+            .lean();
+
+        return res.status(200).send({
+            status: IResponseStatus.Success,
+            message: "Users fetched successfully",
+            data: users,
+        });
+    } catch (error) {
+        console.error("Search users error:", error);
+        return res.status(500).send({
+            status: IResponseStatus.Error,
+            message: "A system error occurred. Please try again later",
+        });
+    }
+};
+
 const updateUser: RequestHandler = async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
     const requesterId = req.user?.id;
@@ -233,4 +281,4 @@ const deleteUser: RequestHandler = async (req: AuthenticatedRequest, res: Respon
     }
 };
 
-export { updateUser, deleteUser, getUserById };
+export { updateUser, deleteUser, getUserById, searchUsers };
