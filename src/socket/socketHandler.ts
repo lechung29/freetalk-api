@@ -45,6 +45,27 @@ type EditMessagePayload = { messageId: string; content: string };
 type ReactMessagePayload = { messageId: string; emoji: string };
 type PinMessagePayload = { messageId: string };
 
+// ── Call payload types ──
+type CallOfferPayload = {
+    targetUserId: string;
+    offer: RTCSessionDescriptionInit;
+    callType: "audio" | "video";
+};
+type CallAnswerPayload = {
+    targetUserId: string;
+    answer: RTCSessionDescriptionInit;
+};
+type CallIceCandidatePayload = {
+    targetUserId: string;
+    candidate: RTCIceCandidateInit;
+};
+type CallEndPayload = {
+    targetUserId: string;
+};
+type CallRejectPayload = {
+    targetUserId: string;
+};
+
 const messagePopulate = [
     { path: "sender", select: "-password -refreshToken" },
     {
@@ -144,7 +165,7 @@ export function initSocket(io: SocketIOServer) {
                     return;
                 }
 
-                // ── Block check: A chặn B hoặc B chặn A ──
+                // ── Block check ──
                 const [senderUser, recipientUser] = await Promise.all([Users.findById(userId).select("blockedUsers").lean(), Users.findById(otherParticipant).select("blockedUsers").lean()]);
 
                 const senderBlockedRecipient = senderUser?.blockedUsers?.some((id) => id.toString() === otherParticipant.toString()) ?? false;
@@ -214,7 +235,6 @@ export function initSocket(io: SocketIOServer) {
                 const message = await Messages.findById(messageId);
                 if (!message) return;
 
-                // Chỉ người gửi mới được xóa
                 if (message.sender.toString() !== userId) {
                     socket.emit("message:error", { message: "You can only delete your own messages" });
                     return;
@@ -227,7 +247,6 @@ export function initSocket(io: SocketIOServer) {
                     deletedAt: new Date(),
                 });
 
-                // Broadcast đến tất cả trong conversation room
                 io.to(`conversation:${message.conversationId.toString()}`).emit("message:deleted", {
                     messageId,
                     conversationId: message.conversationId.toString(),
@@ -266,10 +285,8 @@ export function initSocket(io: SocketIOServer) {
 
                 const plainMessage = decryptMessageDocument(updated.toObject());
 
-                // Broadcast đến conversation room (cả 2 nếu đang mở)
                 io.to(`conversation:${message.conversationId.toString()}`).emit("message:edited", plainMessage);
 
-                // Broadcast thêm đến personal room của người kia (phòng họ không mở conversation)
                 const conv = await Conversations.findById(message.conversationId);
                 if (conv) {
                     const other = conv.participants.find((p) => p.toString() !== userId);
@@ -297,13 +314,9 @@ export function initSocket(io: SocketIOServer) {
 
                 let updated;
                 if (existingIndex >= 0) {
-                    // Toggle off — bỏ reaction
                     updated = await Messages.findByIdAndUpdate(messageId, { $pull: { reactions: { userId, emoji } } }, { new: true }).populate(messagePopulate);
                 } else {
-                    // Toggle on — thêm reaction (bỏ emoji cũ của user này nếu có)
-                    await Messages.findByIdAndUpdate(messageId, {
-                        $pull: { reactions: { userId } },
-                    });
+                    await Messages.findByIdAndUpdate(messageId, { $pull: { reactions: { userId } } });
                     updated = await Messages.findByIdAndUpdate(messageId, { $push: { reactions: { emoji, userId } } }, { new: true }).populate(messagePopulate);
                 }
 
@@ -312,7 +325,6 @@ export function initSocket(io: SocketIOServer) {
                 const plainMessage = decryptMessageDocument(updated.toObject());
                 io.to(`conversation:${message.conversationId.toString()}`).emit("message:reacted", plainMessage);
 
-                // Broadcast thêm đến personal room của người kia
                 const reactConv = await Conversations.findById(message.conversationId);
                 if (reactConv) {
                     const reactOther = reactConv.participants.find((p) => p.toString() !== userId);
@@ -336,13 +348,11 @@ export function initSocket(io: SocketIOServer) {
                 if (!message) return;
                 if (message.isDeleted) return;
 
-                // Chỉ người trong conversation mới được pin
                 const conversation = await Conversations.findById(message.conversationId);
                 if (!conversation) return;
                 const isParticipant = conversation.participants.some((p) => p.toString() === userId);
                 if (!isParticipant) return;
 
-                // Giới hạn tối đa 3 tin nhắn ghim
                 if (!message.isPinned) {
                     const pinnedCount = await Messages.countDocuments({
                         conversationId: message.conversationId,
@@ -362,7 +372,6 @@ export function initSocket(io: SocketIOServer) {
                 const plainMessage = decryptMessageDocument(updated.toObject());
                 io.to(`conversation:${message.conversationId.toString()}`).emit("message:pinned", plainMessage);
 
-                // Broadcast thêm đến personal room của người kia
                 const pinOther = conversation.participants.find((p) => p.toString() !== userId);
                 if (pinOther) {
                     io.to(`user:${pinOther.toString()}`).emit("message:pinned", plainMessage);
@@ -380,7 +389,91 @@ export function initSocket(io: SocketIOServer) {
             socket.to(`conversation:${conversationId}`).emit("message:typing", { userId, conversationId, isTyping });
         });
 
-        // ── disconnect ──
+        // ════════════════════════════════════════════════════════════════
+        // ── CALL SIGNALING ──────────────────────────────────────────────
+        // ════════════════════════════════════════════════════════════════
+
+        /**
+         * Caller → BE → Callee
+         * Gửi offer WebRTC đến người nhận kèm thông tin người gọi
+         */
+        socket.on("call:offer", async (payload: CallOfferPayload) => {
+            const { targetUserId, offer, callType } = payload;
+            if (!targetUserId || !offer) return;
+
+            try {
+                const caller = await Users.findById(userId).select("username avatar").lean();
+                const callerName = (caller as any)?.username ?? "Người dùng";
+                const callerAvatar = (caller as any)?.avatar ?? null;
+
+                // Chuyển tiếp offer tới tất cả socket của người nhận
+                io.to(`user:${targetUserId}`).emit("call:incoming", {
+                    from: userId,
+                    fromName: callerName,
+                    fromAvatar: callerAvatar,
+                    offer,
+                    callType,
+                });
+            } catch (err) {
+                console.error("call:offer error:", err);
+            }
+        });
+
+        /**
+         * Callee → BE → Caller
+         * Gửi answer WebRTC ngược lại cho người gọi
+         */
+        socket.on("call:answer", (payload: CallAnswerPayload) => {
+            const { targetUserId, answer } = payload;
+            if (!targetUserId || !answer) return;
+
+            io.to(`user:${targetUserId}`).emit("call:answered", {
+                from: userId,
+                answer,
+            });
+        });
+
+        /**
+         * Cả hai bên → BE → bên kia
+         * Trao đổi ICE candidates để thiết lập kết nối P2P
+         */
+        socket.on("call:ice-candidate", (payload: CallIceCandidatePayload) => {
+            const { targetUserId, candidate } = payload;
+            if (!targetUserId || !candidate) return;
+
+            io.to(`user:${targetUserId}`).emit("call:ice-candidate", {
+                from: userId,
+                candidate,
+            });
+        });
+
+        /**
+         * Người kết thúc cuộc gọi → BE → bên kia
+         */
+        socket.on("call:end", (payload: CallEndPayload) => {
+            const { targetUserId } = payload;
+            if (!targetUserId) return;
+
+            io.to(`user:${targetUserId}`).emit("call:ended", {
+                from: userId,
+            });
+        });
+
+        /**
+         * Callee từ chối cuộc gọi đến → BE → Caller
+         */
+        socket.on("call:reject", (payload: CallRejectPayload) => {
+            const { targetUserId } = payload;
+            if (!targetUserId) return;
+
+            io.to(`user:${targetUserId}`).emit("call:rejected", {
+                from: userId,
+            });
+        });
+
+        // ════════════════════════════════════════════════════════════════
+        // ── disconnect ──────────────────────────────────────────────────
+        // ════════════════════════════════════════════════════════════════
         socket.on("disconnect", () => {
             removeOnlineUser(userId, socket.id);
             notifyFriendsOnlineStatus(io, userId, false);
