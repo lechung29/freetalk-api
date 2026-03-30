@@ -1,6 +1,6 @@
 /** @format */
 
-import mongoose, { Document } from "mongoose";
+import mongoose, { Schema, type InferSchemaType } from "mongoose";
 
 export enum MessageType {
     Text = "text",
@@ -14,21 +14,29 @@ export interface IMessage extends Document {
     type: MessageType;
     content: string;
     readBy: mongoose.Types.ObjectId[];
+    isDeleted: boolean;
+    deletedAt?: Date;
+    editedAt?: Date;
+    isPinned: boolean;
+    replyTo?: mongoose.Types.ObjectId;
+    reactions: { emoji: string; userId: mongoose.Types.ObjectId }[];
     createdAt: Date;
     updatedAt: Date;
 }
 
-const messageSchema = new mongoose.Schema<IMessage>(
+const messageSchema = new Schema<IMessage>(
     {
         conversationId: {
-            type: mongoose.Schema.Types.ObjectId,
+            type: Schema.Types.ObjectId,
             ref: "Conversations",
             required: true,
+            index: true,
         },
         sender: {
-            type: mongoose.Schema.Types.ObjectId,
+            type: Schema.Types.ObjectId,
             ref: "Users",
             required: true,
+            index: true,
         },
         type: {
             type: String,
@@ -41,17 +49,45 @@ const messageSchema = new mongoose.Schema<IMessage>(
         },
         readBy: [
             {
-                type: mongoose.Schema.Types.ObjectId,
-                ref: "Users",
+                type: Schema.Types.ObjectId,
+                ref: "User",
                 default: [],
             },
         ],
+        isDeleted: {
+            type: Boolean,
+            default: false,
+        },
+        deletedAt: {
+            type: Date,
+        },
+        editedAt: {
+            type: Date,
+        },
+        isPinned: {
+            type: Boolean,
+            default: false,
+        },
+        replyTo: {
+            type: Schema.Types.ObjectId,
+            ref: "Messages",
+            default: null,
+        },
+        reactions: [
+            {
+                emoji: { type: String, required: true },
+                userId: { type: Schema.Types.ObjectId, ref: "Users", required: true },
+            },
+        ],
     },
-    { timestamps: true },
+    {
+        timestamps: true,
+    },
 );
 
-messageSchema.index({ conversationId: 1, createdAt: -1 });
+messageSchema.index({ conversationId: 1, createdAt: 1 });
 
-const Messages = mongoose.model<IMessage>("Messages", messageSchema);
+type MessageDocument = InferSchemaType<typeof messageSchema>;
+const Messages = mongoose.model<MessageDocument>("Messages", messageSchema);
 
 export default Messages;

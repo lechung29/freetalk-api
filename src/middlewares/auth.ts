@@ -3,9 +3,10 @@
 import jwt from "jsonwebtoken";
 import { IResponseStatus, type IUserInfo } from "../models/users/usersModel.js";
 import type { NextFunction, Request, Response } from "express";
+import Users from "../models/users/usersModel.js";
 
 export interface AuthenticatedRequest extends Request {
-    user?: IUserInfo;
+    user?: IUserInfo & { timezone?: string };
 }
 
 export const verifyToken = async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
@@ -21,7 +22,15 @@ export const verifyToken = async (req: AuthenticatedRequest, res: Response, next
         }
 
         const payload = jwt.verify(token, process.env.JWT_SECRET!);
-        req.user = payload as IUserInfo;
+        const userInfo = payload as IUserInfo;
+
+        // Always fetch timezone from database to ensure latest value
+        const user = await Users.findById(userInfo.id).select("timezone").lean();
+        if (user) {
+            userInfo.timezone = user.timezone;
+        }
+
+        req.user = userInfo;
         next();
     } catch (error: any) {
         if (error.name === "TokenExpiredError") {

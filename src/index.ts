@@ -26,6 +26,7 @@ const io = new SocketIOServer(httpServer, {
         origin: ["http://localhost:5173"],
         credentials: true,
     },
+    maxHttpBufferSize: 50 * 1024 * 1024,
 });
 
 setIO(io);
