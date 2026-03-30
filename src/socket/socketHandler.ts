@@ -2,33 +2,42 @@
 
 import { Server as SocketIOServer, Socket } from "socket.io";
 import jwt from "jsonwebtoken";
-import Messages from "../models/messages/messageModel.js";
+import Messages, { MessageType } from "../models/messages/messageModel.js";
 import Conversations from "../models/conversations/conversationModel.js";
 import FriendRequests, { FriendRequestStatus } from "../models/friendRequests/friendRequestModel.js";
 import { decryptMessageDocument, buildEncryptedMessageContent, type IMessageAttachment } from "../utils/messageCrypto.js";
 import Users from "../models/users/usersModel.js";
 
-// Map userId → Set<socketId>
-const onlineUsers = new Map<string, Set<string>>();
+// ✅ FIX: Map userId → Map<socketId, socket> để track tất cả connections
+const onlineUsers = new Map<string, Map<string, Socket>>();
 
-function addOnlineUser(userId: string, socketId: string) {
-    if (!onlineUsers.has(userId)) onlineUsers.set(userId, new Set());
-    onlineUsers.get(userId)!.add(socketId);
+function addOnlineUser(userId: string, socketId: string, socket: Socket) {
+    if (!onlineUsers.has(userId)) {
+        onlineUsers.set(userId, new Map());
+    }
+    onlineUsers.get(userId)!.set(socketId, socket);
+    console.log(`[Socket] User ${userId} connected (socket: ${socketId}). Total sockets: ${onlineUsers.get(userId)!.size}`);
 }
 
 function removeOnlineUser(userId: string, socketId: string) {
     const sockets = onlineUsers.get(userId);
     if (!sockets) return;
     sockets.delete(socketId);
-    if (sockets.size === 0) onlineUsers.delete(userId);
+    console.log(`[Socket] User ${userId} disconnected (socket: ${socketId}). Remaining: ${sockets.size}`);
+    if (sockets.size === 0) {
+        onlineUsers.delete(userId);
+    }
 }
 
+// ✅ FIX: Lấy tất cả socket IDs của user
 function getSocketIds(userId: string): string[] {
-    return Array.from(onlineUsers.get(userId) ?? []);
+    const sockets = onlineUsers.get(userId);
+    return sockets ? Array.from(sockets.keys()) : [];
 }
 
 export function isUserOnline(userId: string): boolean {
-    return onlineUsers.has(userId) && onlineUsers.get(userId)!.size > 0;
+    const sockets = onlineUsers.get(userId);
+    return sockets ? sockets.size > 0 : false;
 }
 
 type SendMessagePayload = {
@@ -66,6 +75,13 @@ type CallRejectPayload = {
     targetUserId: string;
 };
 
+type CallConnectedPayload = {
+    callId: string;
+    connectedAt: string;
+    callerId: string;
+    receiverId: string;
+};
+
 const messagePopulate = [
     { path: "sender", select: "-password -refreshToken" },
     {
@@ -76,6 +92,135 @@ const messagePopulate = [
         },
     },
 ];
+
+// ✅ NEW: Track active calls with timeout
+const activeCallTimers = new Map<string, NodeJS.Timeout>();
+
+type CallStatus = "ended" | "rejected" | "missed" | "cancelled" | "offline";
+
+type CallSession = {
+    conversationId: string;
+    callerId: string;
+    calleeId: string;
+    callType: "audio" | "video";
+    startedAt: number;
+    connectedAt?: number;
+};
+
+const activeCallSessions = new Map<string, CallSession>();
+
+function getCallKey(userA: string, userB: string) {
+    return [userA, userB].sort().join(":");
+}
+
+function formatCallDuration(totalSeconds: number) {
+    const seconds = Math.max(0, Math.floor(totalSeconds));
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = seconds % 60;
+
+    if (hours > 0) {
+        return `${hours}:${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+    }
+
+    return `${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+}
+
+function buildCallSummary(status: CallStatus, callType: "audio" | "video", durationSeconds = 0) {
+    const kind = callType === "video" ? "video call" : "audio call";
+
+    switch (status) {
+        case "ended":
+            return `Đã gọi ${kind} ${formatCallDuration(durationSeconds)}`;
+        case "rejected":
+            return "Cuộc gọi bị từ chối";
+        case "missed":
+            return "Cuộc gọi nhỡ";
+        case "cancelled":
+            return "Cuộc gọi đã bị hủy";
+        case "offline":
+            return "Cuộc gọi không thực hiện được";
+        default:
+            return "Cuộc gọi";
+    }
+}
+
+async function resolveOrCreateConversation(userA: string, userB: string) {
+    let conversation = await Conversations.findOne({
+        participants: { $all: [userA, userB] },
+    });
+
+    if (!conversation) {
+        conversation = await Conversations.create({
+            participants: [userA, userB],
+        });
+    }
+
+    return conversation;
+}
+
+async function emitConversationUpdates(io: SocketIOServer, conversationId: string, participantIds: string[]) {
+    const updatedConversation = await Conversations.findById(conversationId)
+        .populate("participants", "-password -refreshToken")
+        .populate({
+            path: "lastMessage",
+            populate: { path: "sender", select: "-password -refreshToken" },
+        });
+
+    if (!updatedConversation) return;
+
+    const plainConversation = updatedConversation.toObject() as any;
+    if (plainConversation.lastMessage) {
+        plainConversation.lastMessage = decryptMessageDocument(plainConversation.lastMessage);
+    }
+
+    for (const participantId of participantIds) {
+        const socketIds = getSocketIds(participantId);
+        const isInRoom = socketIds.some((sid) => io.sockets.sockets.get(sid)?.rooms.has(`conversation:${conversationId}`));
+
+        if (!isInRoom) {
+            io.to(`user:${participantId}`).emit("conversation:updated", plainConversation);
+        }
+    }
+}
+
+async function createCallLogMessage(io: SocketIOServer, session: CallSession, status: CallStatus, endedBy: string) {
+    const endedAt = Date.now();
+    const durationSeconds = status === "ended" && session.connectedAt ? Math.max(0, Math.floor((endedAt - session.connectedAt) / 1000)) : 0;
+
+    const message = await Messages.create({
+        conversationId: session.conversationId,
+        sender: session.callerId,
+        content: buildEncryptedMessageContent(buildCallSummary(status, session.callType, durationSeconds), null),
+        type: MessageType.Call,
+        readBy: [endedBy],
+        callMeta: {
+            status,
+            callType: session.callType,
+            durationSeconds,
+            startedAt: new Date(session.connectedAt ?? session.startedAt),
+            endedAt: new Date(endedAt),
+            initiatorId: session.callerId,
+            recipientId: session.calleeId,
+            endedBy,
+        },
+    });
+
+    const populatedMessage = await message.populate(messagePopulate);
+    const plainMessage = decryptMessageDocument(populatedMessage.toObject());
+
+    await Conversations.findByIdAndUpdate(session.conversationId, {
+        lastMessage: message._id,
+        lastMessageAt: message.createdAt,
+    });
+
+    io.to(`conversation:${session.conversationId}`).emit("message:new", plainMessage);
+    await emitConversationUpdates(io, session.conversationId, [session.callerId, session.calleeId]);
+}
+
+function buildCallId(userA: string, userB: string) {
+    return [userA, userB].sort().join(":");
+}
 
 export function initSocket(io: SocketIOServer) {
     io.use((socket, next) => {
@@ -93,7 +238,8 @@ export function initSocket(io: SocketIOServer) {
     io.on("connection", (socket: Socket) => {
         const userId = (socket as any).userId as string;
 
-        addOnlineUser(userId, socket.id);
+        // ✅ FIX: Pass socket instance để store tất cả connections
+        addOnlineUser(userId, socket.id, socket);
         notifyFriendsOnlineStatus(io, userId, true);
         socket.join(`user:${userId}`);
 
@@ -393,20 +539,106 @@ export function initSocket(io: SocketIOServer) {
         // ── CALL SIGNALING ──────────────────────────────────────────────
         // ════════════════════════════════════════════════════════════════
 
-        /**
-         * Caller → BE → Callee
-         * Gửi offer WebRTC đến người nhận kèm thông tin người gọi
-         */
         socket.on("call:offer", async (payload: CallOfferPayload) => {
             const { targetUserId, offer, callType } = payload;
             if (!targetUserId || !offer) return;
 
             try {
+                if (targetUserId === userId) {
+                    socket.emit("call:error", { message: "Không thể tự gọi cho chính mình" });
+                    return;
+                }
+
+                const conversation = await resolveOrCreateConversation(userId, targetUserId);
+
+                if (!isUserOnline(targetUserId)) {
+                    const offlineSession: CallSession = {
+                        conversationId: conversation._id.toString(),
+                        callerId: userId,
+                        calleeId: targetUserId,
+                        callType,
+                        startedAt: Date.now(),
+                    };
+
+                    await createCallLogMessage(io, offlineSession, "offline", userId);
+
+                    socket.emit("call:recipient_offline", {
+                        targetUserId,
+                        message: "Người nhận không đang online",
+                    });
+                    return;
+                }
+
+                const stillFriends = await FriendRequests.findOne({
+                    status: FriendRequestStatus.Accepted,
+                    $or: [
+                        { sender: userId, receiver: targetUserId },
+                        { sender: targetUserId, receiver: userId },
+                    ],
+                });
+
+                if (!stillFriends) {
+                    socket.emit("call:error", { message: "Chỉ có thể gọi cho bạn bè" });
+                    return;
+                }
+
+                const [callerUser, targetUser] = await Promise.all([Users.findById(userId).select("blockedUsers").lean(), Users.findById(targetUserId).select("blockedUsers").lean()]);
+
+                const callerBlockedTarget = callerUser?.blockedUsers?.some((id) => id.toString() === targetUserId.toString()) ?? false;
+                const targetBlockedCaller = targetUser?.blockedUsers?.some((id) => id.toString() === userId.toString()) ?? false;
+
+                if (callerBlockedTarget) {
+                    socket.emit("call:error", { code: "BLOCKED_BY_YOU", message: "Bạn đã chặn người này. Hãy bỏ chặn để gọi." });
+                    return;
+                }
+
+                if (targetBlockedCaller) {
+                    socket.emit("call:error", { code: "BLOCKED_BY_THEM", message: "Bạn không thể gọi cho người này." });
+                    return;
+                }
+
                 const caller = await Users.findById(userId).select("username avatar").lean();
                 const callerName = (caller as any)?.username ?? "Người dùng";
                 const callerAvatar = (caller as any)?.avatar ?? null;
 
-                // Chuyển tiếp offer tới tất cả socket của người nhận
+                const callId = getCallKey(userId, targetUserId);
+
+                const existingTimer = activeCallTimers.get(callId);
+                if (existingTimer) clearTimeout(existingTimer);
+
+                activeCallSessions.set(callId, {
+                    conversationId: conversation._id.toString(),
+                    callerId: userId,
+                    calleeId: targetUserId,
+                    callType,
+                    startedAt: Date.now(),
+                });
+
+                const timer = setTimeout(() => {
+                    void (async () => {
+                        const session = activeCallSessions.get(callId);
+                        activeCallTimers.delete(callId);
+
+                        if (!session) return;
+
+                        activeCallSessions.delete(callId);
+                        await createCallLogMessage(io, session, "missed", session.calleeId);
+
+                        io.to(`user:${session.callerId}`).emit("call:timeout", {
+                            targetUserId: session.calleeId,
+                            message: "Cuộc gọi đã hết hạn",
+                        });
+                        io.to(`user:${session.calleeId}`).emit("call:timeout", {
+                            targetUserId: session.callerId,
+                            message: "Cuộc gọi đã hết hạn",
+                        });
+                    })().catch((err) => {
+                        console.error("[Call] timeout log error:", err);
+                    });
+                }, 30000);
+
+                activeCallTimers.set(callId, timer);
+
                 io.to(`user:${targetUserId}`).emit("call:incoming", {
                     from: userId,
                     fromName: callerName,
@@ -414,29 +646,58 @@ export function initSocket(io: SocketIOServer) {
                     offer,
                     callType,
                 });
+
+                console.log(`[Call] Offer sent from ${userId} to ${targetUserId}`);
             } catch (err) {
                 console.error("call:offer error:", err);
+                socket.emit("call:error", { message: "Failed to send call offer" });
             }
         });
 
-        /**
-         * Callee → BE → Caller
-         * Gửi answer WebRTC ngược lại cho người gọi
-         */
         socket.on("call:answer", (payload: CallAnswerPayload) => {
             const { targetUserId, answer } = payload;
             if (!targetUserId || !answer) return;
 
-            io.to(`user:${targetUserId}`).emit("call:answered", {
-                from: userId,
-                answer,
-            });
+            try {
+                const callId = getCallKey(targetUserId, userId);
+                const timer = activeCallTimers.get(callId);
+
+                if (timer) {
+                    clearTimeout(timer);
+                    activeCallTimers.delete(callId);
+                }
+
+                const session = activeCallSessions.get(callId);
+                if (session) {
+                    session.connectedAt = Date.now();
+                    activeCallSessions.set(callId, session);
+                }
+
+                const connectedAt = new Date().toISOString();
+                const connectedPayload: CallConnectedPayload = {
+                    callId: buildCallId(targetUserId, userId),
+                    connectedAt,
+                    callerId: targetUserId,
+                    receiverId: userId,
+                };
+
+                io.to(`user:${targetUserId}`).emit("call:answered", {
+                    from: userId,
+                    answer,
+                    connectedAt,
+                    callId: connectedPayload.callId,
+                });
+
+                io.to(`user:${targetUserId}`).emit("call:connected", connectedPayload);
+                io.to(`user:${userId}`).emit("call:connected", connectedPayload);
+
+                console.log(`[Call] Answer sent from ${userId} to ${targetUserId}`);
+                console.log(`[Call] Call connected between ${targetUserId} and ${userId} at ${connectedAt}`);
+            } catch (err) {
+                console.error("call:answer error:", err);
+            }
         });
 
-        /**
-         * Cả hai bên → BE → bên kia
-         * Trao đổi ICE candidates để thiết lập kết nối P2P
-         */
         socket.on("call:ice-candidate", (payload: CallIceCandidatePayload) => {
             const { targetUserId, candidate } = payload;
             if (!targetUserId || !candidate) return;
@@ -447,36 +708,82 @@ export function initSocket(io: SocketIOServer) {
             });
         });
 
-        /**
-         * Người kết thúc cuộc gọi → BE → bên kia
-         */
-        socket.on("call:end", (payload: CallEndPayload) => {
+        socket.on("call:end", async (payload: CallEndPayload) => {
             const { targetUserId } = payload;
             if (!targetUserId) return;
 
-            io.to(`user:${targetUserId}`).emit("call:ended", {
-                from: userId,
-            });
+            try {
+                const callId = getCallKey(userId, targetUserId);
+
+                const timer1 = activeCallTimers.get(callId);
+                if (timer1) {
+                    clearTimeout(timer1);
+                    activeCallTimers.delete(callId);
+                }
+
+                const session = activeCallSessions.get(callId);
+                if (session) {
+                    const status: CallStatus = session.connectedAt ? "ended" : userId === session.callerId ? "cancelled" : "rejected";
+
+                    activeCallSessions.delete(callId);
+                    await createCallLogMessage(io, session, status, userId);
+                }
+
+                io.to(`user:${targetUserId}`).emit("call:ended", {
+                    from: userId,
+                });
+
+                console.log(`[Call] Call ended between ${userId} and ${targetUserId}`);
+            } catch (err) {
+                console.error("call:end error:", err);
+            }
         });
 
-        /**
-         * Callee từ chối cuộc gọi đến → BE → Caller
-         */
-        socket.on("call:reject", (payload: CallRejectPayload) => {
+        socket.on("call:reject", async (payload: CallRejectPayload) => {
             const { targetUserId } = payload;
             if (!targetUserId) return;
 
-            io.to(`user:${targetUserId}`).emit("call:rejected", {
-                from: userId,
-            });
+            try {
+                const callId = getCallKey(targetUserId, userId);
+                const timer = activeCallTimers.get(callId);
+                if (timer) {
+                    clearTimeout(timer);
+                    activeCallTimers.delete(callId);
+                }
+
+                const session = activeCallSessions.get(callId);
+                if (session) {
+                    activeCallSessions.delete(callId);
+                    await createCallLogMessage(io, session, "rejected", userId);
+                }
+
+                io.to(`user:${targetUserId}`).emit("call:rejected", {
+                    from: userId,
+                });
+
+                console.log(`[Call] Call rejected by ${userId} from ${targetUserId}`);
+            } catch (err) {
+                console.error("call:reject error:", err);
+            }
         });
 
-        // ════════════════════════════════════════════════════════════════
-        // ── disconnect ──────────────────────────────────────────────────
-        // ════════════════════════════════════════════════════════════════
         socket.on("disconnect", () => {
             removeOnlineUser(userId, socket.id);
-            notifyFriendsOnlineStatus(io, userId, false);
+            notifyFriendsOnlineStatus(io, userId, isUserOnline(userId));
+
+            for (const [key, timer] of activeCallTimers.entries()) {
+                const [a, b] = key.split(":");
+                if (a === userId || b === userId) {
+                    clearTimeout(timer);
+                    activeCallTimers.delete(key);
+                }
+            }
+
+            for (const [key, session] of activeCallSessions.entries()) {
+                if (session.callerId === userId || session.calleeId === userId) {
+                    activeCallSessions.delete(key);
+                }
+            }
         });
     });
 }

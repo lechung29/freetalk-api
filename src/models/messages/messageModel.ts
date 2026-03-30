@@ -6,6 +6,20 @@ export enum MessageType {
     Text = "text",
     Image = "image",
     File = "file",
+    Call = "call",
+}
+
+export type CallMessageStatus = "ended" | "rejected" | "missed" | "cancelled" | "offline";
+
+export interface ICallMessageMeta {
+    status: CallMessageStatus;
+    callType: "audio" | "video";
+    durationSeconds: number;
+    startedAt?: Date;
+    endedAt?: Date;
+    initiatorId?: mongoose.Types.ObjectId | null;
+    recipientId?: mongoose.Types.ObjectId | null;
+    endedBy?: mongoose.Types.ObjectId | null;
 }
 
 export interface IMessage extends Document {
@@ -20,6 +34,7 @@ export interface IMessage extends Document {
     isPinned: boolean;
     replyTo?: mongoose.Types.ObjectId;
     reactions: { emoji: string; userId: mongoose.Types.ObjectId }[];
+    callMeta?: ICallMessageMeta | null;
     createdAt: Date;
     updatedAt: Date;
 }
@@ -79,6 +94,45 @@ const messageSchema = new Schema<IMessage>(
                 userId: { type: Schema.Types.ObjectId, ref: "Users", required: true },
             },
         ],
+        callMeta: {
+            status: {
+                type: String,
+                enum: ["ended", "rejected", "missed", "cancelled", "offline"],
+                default: null,
+            },
+            callType: {
+                type: String,
+                enum: ["audio", "video"],
+                default: null,
+            },
+            durationSeconds: {
+                type: Number,
+                default: 0,
+            },
+            startedAt: {
+                type: Date,
+                default: null,
+            },
+            endedAt: {
+                type: Date,
+                default: null,
+            },
+            initiatorId: {
+                type: Schema.Types.ObjectId,
+                ref: "Users",
+                default: null,
+            },
+            recipientId: {
+                type: Schema.Types.ObjectId,
+                ref: "Users",
+                default: null,
+            },
+            endedBy: {
+                type: Schema.Types.ObjectId,
+                ref: "Users",
+                default: null,
+            },
+        },
     },
     {
         timestamps: true,
