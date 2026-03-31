@@ -15,6 +15,7 @@ import conversationRouter from "./routes/conversationRoutes.js";
 import notificationRouter from "./routes/notificationRoutes.js";
 import { initSocket } from "./socket/socketHandler.js";
 import { setIO } from "./socket/socketInstance.js";
+import groupRouter from "./routes/groupRoutes.js";
 
 dotenv.config();
 
@@ -52,6 +53,7 @@ app.use("/api/v1/users", userRouter);
 app.use("/api/v1/friends", friendRouter);
 app.use("/api/v1/conversations", conversationRouter);
 app.use("/api/v1/notifications", notificationRouter);
+app.use("/api/v1/groups", groupRouter);
 
 app.get("/health", (_req, res) => {
     res.status(200).send("OK");

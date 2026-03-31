@@ -2,10 +2,10 @@
 
 import mongoose, { Document } from "mongoose";
 
-export type NotificationType = "friend_request" | "friend_request_accepted" | "friend_request_declined" | "friend_removed" | "message" | "system";
+export type NotificationType = "friend_request" | "friend_request_accepted" | "friend_request_declined" | "friend_request_cancelled" | "group_invite" | "message" | "system";
 
 export interface INotification extends Document {
-    recipient: mongoose.Types.ObjectId; // người nhận
+    recipient: mongoose.Types.ObjectId;
     type: NotificationType;
     title: string;
     body: string;
