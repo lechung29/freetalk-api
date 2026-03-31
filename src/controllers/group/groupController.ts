@@ -7,8 +7,7 @@ import Users from "../../models/users/usersModel.js";
 import Groups from "../../models/groups/groupModel.js";
 import { saveAndEmitNotification } from "../../utils/notification.js";
 import mongoose from "mongoose";
-
-const objectIdRegex = /^[0-9a-fA-F]{24}$/;
+import type { CreateGroupBody, InviteMembersBody } from "../../schemas/group.schema.js";
 
 function uniq(list: string[]) {
     return [...new Set(list.filter(Boolean))];
@@ -16,15 +15,15 @@ function uniq(list: string[]) {
 
 function groupToInviteDto(group: any, userId: string) {
     const pending = group.members.find((m: any) => m.user?._id?.toString?.() === userId && m.status === "pending");
-    const inviter = pending?.invitedBy || group.owner;
+    const inviter = pending?.invitedBy ?? group.owner;
 
     return {
         groupId: group._id.toString(),
         groupName: group.name,
-        groupAvatar: group.avatar || null,
-        description: group.description || null,
+        groupAvatar: group.avatar ?? null,
+        description: group.description ?? null,
         inviter,
-        invitedAt: pending?.invitedAt || group.createdAt,
+        invitedAt: pending?.invitedAt ?? group.createdAt,
         memberCount: group.members.filter((m: any) => m.status === "accepted").length,
     };
 }
@@ -38,33 +37,21 @@ async function populateGroup(group: any) {
     return group;
 }
 
-// POST /api/v1/groups
 const createGroup: RequestHandler = async (req: AuthenticatedRequest, res: Response) => {
     const userId = req.user?.id;
-    const {
-        name,
-        description = "",
-        avatar = null,
-        invitedUserIds = [],
-    } = req.body as {
-        name?: string;
-        description?: string;
-        avatar?: string | null;
-        invitedUserIds?: string[];
-    };
 
     if (!userId) {
         return res.status(401).send({ status: IResponseStatus.Error, message: "Unauthorized" });
     }
+    const { name, description = "", avatar = null, invitedUserIds = [] } = req.body as CreateGroupBody;
 
-    if (!name?.trim()) {
-        return res.status(400).send({ status: IResponseStatus.Error, message: "Group name is required" });
-    }
-
-    const normalizedInvites = uniq(invitedUserIds).filter((id) => objectIdRegex.test(id) && id !== userId);
+    const normalizedInvites = uniq(invitedUserIds).filter((id) => id !== userId);
 
     if (normalizedInvites.length + 1 > 50) {
-        return res.status(400).send({ status: IResponseStatus.Error, message: "Each group can have at most 50 members" });
+        return res.status(400).send({
+            status: IResponseStatus.Error,
+            message: "Each group can have at most 50 members",
+        });
     }
 
     try {
@@ -74,9 +61,9 @@ const createGroup: RequestHandler = async (req: AuthenticatedRequest, res: Respo
         const validInviteIds = users.map((u) => u._id.toString());
 
         const group = await Groups.create({
-            name: name.trim(),
-            description: description?.trim(),
-            avatar: avatar || null,
+            name,
+            description,
+            avatar,
             owner: userId,
             members: [
                 {
@@ -104,8 +91,8 @@ const createGroup: RequestHandler = async (req: AuthenticatedRequest, res: Respo
         const creatorName = (creator as any)?.username ?? "Someone";
 
         await Promise.all(
-            validInviteIds.map(async (inviteId) => {
-                await saveAndEmitNotification({
+            validInviteIds.map((inviteId) =>
+                saveAndEmitNotification({
                     recipientId: inviteId,
                     type: "group_invite",
                     title: "Group invite",
@@ -113,13 +100,13 @@ const createGroup: RequestHandler = async (req: AuthenticatedRequest, res: Respo
                     data: {
                         groupId: group._id.toString(),
                         groupName: group.name,
-                        groupAvatar: group.avatar || null,
+                        groupAvatar: group.avatar ?? null,
                         inviterId: userId,
                         inviterName: creatorName,
                         memberCount: validInviteIds.length + 1,
                     },
-                });
-            }),
+                }),
+            ),
         );
 
         return res.status(201).send({
@@ -133,7 +120,6 @@ const createGroup: RequestHandler = async (req: AuthenticatedRequest, res: Respo
     }
 };
 
-// GET /api/v1/groups
 const getMyGroups: RequestHandler = async (req: AuthenticatedRequest, res: Response) => {
     const userId = req.user?.id;
 
@@ -164,7 +150,6 @@ const getMyGroups: RequestHandler = async (req: AuthenticatedRequest, res: Respo
     }
 };
 
-// GET /api/v1/groups/invites
 const getPendingInvites: RequestHandler = async (req: AuthenticatedRequest, res: Response) => {
     const userId = req.user?.id;
 
@@ -191,14 +176,9 @@ const getPendingInvites: RequestHandler = async (req: AuthenticatedRequest, res:
     }
 };
 
-// PATCH /api/v1/groups/:groupId/accept
 const acceptInvite: RequestHandler = async (req: AuthenticatedRequest, res: Response) => {
     const userId = req.user?.id;
     const { groupId } = req.params;
-
-    if (!groupId || !objectIdRegex.test(groupId)) {
-        return res.status(400).send({ status: IResponseStatus.Error, message: "Invalid group ID" });
-    }
 
     try {
         const group = await Groups.findById(groupId);
@@ -208,7 +188,10 @@ const acceptInvite: RequestHandler = async (req: AuthenticatedRequest, res: Resp
 
         const member = group.members.find((m) => m.user.toString() === userId);
         if (!member || member.status !== "pending") {
-            return res.status(403).send({ status: IResponseStatus.Error, message: "You do not have a pending invite for this group" });
+            return res.status(403).send({
+                status: IResponseStatus.Error,
+                message: "You do not have a pending invite for this group",
+            });
         }
 
         const acceptedCount = group.members.filter((m) => m.status === "accepted").length;
@@ -219,7 +202,6 @@ const acceptInvite: RequestHandler = async (req: AuthenticatedRequest, res: Resp
         member.status = "accepted";
         member.respondedAt = new Date();
         await group.save();
-
         await populateGroup(group);
 
         return res.status(200).send({
@@ -233,14 +215,9 @@ const acceptInvite: RequestHandler = async (req: AuthenticatedRequest, res: Resp
     }
 };
 
-// PATCH /api/v1/groups/:groupId/decline
 const declineInvite: RequestHandler = async (req: AuthenticatedRequest, res: Response) => {
     const userId = req.user?.id;
     const { groupId } = req.params;
-
-    if (!groupId || !objectIdRegex.test(groupId)) {
-        return res.status(400).send({ status: IResponseStatus.Error, message: "Invalid group ID" });
-    }
 
     try {
         const group = await Groups.findById(groupId);
@@ -250,32 +227,27 @@ const declineInvite: RequestHandler = async (req: AuthenticatedRequest, res: Res
 
         const member = group.members.find((m) => m.user.toString() === userId);
         if (!member || member.status !== "pending") {
-            return res.status(403).send({ status: IResponseStatus.Error, message: "You do not have a pending invite for this group" });
+            return res.status(403).send({
+                status: IResponseStatus.Error,
+                message: "You do not have a pending invite for this group",
+            });
         }
 
         member.status = "declined";
         member.respondedAt = new Date();
         await group.save();
 
-        return res.status(200).send({
-            status: IResponseStatus.Success,
-            message: "Invite declined",
-        });
+        return res.status(200).send({ status: IResponseStatus.Success, message: "Invite declined" });
     } catch (error) {
         console.error("declineInvite error:", error);
         return res.status(500).send({ status: IResponseStatus.Error, message: "A system error occurred" });
     }
 };
 
-// POST /api/v1/groups/:groupId/invite — owner/admin mời thêm thành viên
 const inviteMembers: RequestHandler = async (req: AuthenticatedRequest, res: Response) => {
     const userId = req.user?.id;
     const { groupId } = req.params;
-    const { userIds = [] } = req.body as { userIds?: string[] };
-
-    if (!groupId || !objectIdRegex.test(groupId)) {
-        return res.status(400).send({ status: IResponseStatus.Error, message: "Invalid group ID" });
-    }
+    const { userIds = [] } = req.body as InviteMembersBody;
 
     try {
         const group = await Groups.findById(groupId);
@@ -285,16 +257,22 @@ const inviteMembers: RequestHandler = async (req: AuthenticatedRequest, res: Res
 
         const requester = group.members.find((m) => m.user.toString() === userId && m.status === "accepted");
         if (!requester || (requester.role !== "owner" && requester.role !== "admin")) {
-            return res.status(403).send({ status: IResponseStatus.Error, message: "Only owner or admin can invite members" });
+            return res.status(403).send({
+                status: IResponseStatus.Error,
+                message: "Only owner or admin can invite members",
+            });
         }
 
-        const validIds = uniq(userIds).filter((id) => objectIdRegex.test(id) && id !== userId);
+        const validIds = uniq(userIds).filter((id) => id !== userId);
         const existingIds = group.members.map((m) => m.user.toString());
         const newIds = validIds.filter((id) => !existingIds.includes(id));
 
         const acceptedCount = group.members.filter((m) => m.status === "accepted").length;
         if (acceptedCount + newIds.length > 50) {
-            return res.status(400).send({ status: IResponseStatus.Error, message: "Group would exceed 50 members" });
+            return res.status(400).send({
+                status: IResponseStatus.Error,
+                message: "Group would exceed 50 members",
+            });
         }
 
         const inviter = await Users.findById(userId).select("username").lean();
@@ -318,7 +296,7 @@ const inviteMembers: RequestHandler = async (req: AuthenticatedRequest, res: Res
                 data: {
                     groupId: group._id.toString(),
                     groupName: group.name,
-                    groupAvatar: group.avatar || null,
+                    groupAvatar: group.avatar ?? null,
                     inviterId: userId,
                     inviterName,
                     memberCount: acceptedCount,
@@ -340,14 +318,9 @@ const inviteMembers: RequestHandler = async (req: AuthenticatedRequest, res: Res
     }
 };
 
-// DELETE /api/v1/groups/:groupId  — chỉ owner mới được xóa
 const deleteGroup: RequestHandler = async (req: AuthenticatedRequest, res: Response) => {
     const userId = req.user?.id;
     const { groupId } = req.params;
-
-    if (!groupId || !objectIdRegex.test(groupId)) {
-        return res.status(400).send({ status: IResponseStatus.Error, message: "Invalid group ID" });
-    }
 
     try {
         const group = await Groups.findById(groupId);
@@ -356,29 +329,24 @@ const deleteGroup: RequestHandler = async (req: AuthenticatedRequest, res: Respo
         }
 
         if (group.owner.toString() !== userId) {
-            return res.status(403).send({ status: IResponseStatus.Error, message: "Only the owner can delete this group" });
+            return res.status(403).send({
+                status: IResponseStatus.Error,
+                message: "Only the owner can delete this group",
+            });
         }
 
         await Groups.findByIdAndDelete(groupId);
 
-        return res.status(200).send({
-            status: IResponseStatus.Success,
-            message: "Group deleted successfully",
-        });
+        return res.status(200).send({ status: IResponseStatus.Success, message: "Group deleted successfully" });
     } catch (error) {
         console.error("deleteGroup error:", error);
         return res.status(500).send({ status: IResponseStatus.Error, message: "A system error occurred" });
     }
 };
 
-// PATCH /api/v1/groups/:groupId/members/:memberId/promote  — chỉ owner promote lên admin
 const promoteMember: RequestHandler = async (req: AuthenticatedRequest, res: Response) => {
     const userId = req.user?.id;
     const { groupId, memberId } = req.params;
-
-    if (!groupId || !objectIdRegex.test(groupId) || !memberId || !objectIdRegex.test(memberId)) {
-        return res.status(400).send({ status: IResponseStatus.Error, message: "Invalid ID" });
-    }
 
     try {
         const group = await Groups.findById(groupId);
@@ -387,7 +355,10 @@ const promoteMember: RequestHandler = async (req: AuthenticatedRequest, res: Res
         }
 
         if (group.owner.toString() !== userId) {
-            return res.status(403).send({ status: IResponseStatus.Error, message: "Only the owner can promote members" });
+            return res.status(403).send({
+                status: IResponseStatus.Error,
+                message: "Only the owner can promote members",
+            });
         }
 
         const member = group.members.find((m) => m.user.toString() === memberId && m.status === "accepted");
@@ -401,7 +372,6 @@ const promoteMember: RequestHandler = async (req: AuthenticatedRequest, res: Res
 
         member.role = member.role === "admin" ? "member" : "admin";
         await group.save();
-
         await populateGroup(group);
 
         return res.status(200).send({

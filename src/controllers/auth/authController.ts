@@ -3,11 +3,12 @@
 import type { NextFunction, Request, RequestHandler, Response } from "express";
 import jwt from "jsonwebtoken";
 import bcryptjs from "bcryptjs";
-import Users, { IResponseStatus, IUserStatus, type IUserData } from "../../models/users/usersModel.js";
+import Users, { IResponseStatus, IUserStatus } from "../../models/users/usersModel.js";
 import type { AuthenticatedRequest } from "../../middlewares/auth.js";
+import type { LoginWithGoogleBody } from "../../schemas/auth.schema.js";
 
 const loginWithGoogle: RequestHandler = async (req: Request, res: Response) => {
-    const { email, username, avatar } = req.body;
+    const { email, username, avatar } = req.body as LoginWithGoogleBody;
 
     try {
         let existingUser = await Users.findOne({ email });
@@ -31,7 +32,7 @@ const loginWithGoogle: RequestHandler = async (req: Request, res: Response) => {
             existingUser = newUser;
         }
 
-        const accessToken = await jwt.sign({ id: existingUser.id, username: existingUser.username }, process.env.JWT_SECRET!, { expiresIn: "10m" });
+        const accessToken = jwt.sign({ id: existingUser.id, username: existingUser.username }, process.env.JWT_SECRET!, { expiresIn: "10m" });
         const currentRefreshToken = jwt.sign({ id: existingUser.id, email: existingUser.email, username: existingUser.username }, process.env.JWT_SECRET!, { expiresIn: "1y" });
 
         await existingUser.updateOne({ $push: { refreshToken: currentRefreshToken } });
@@ -48,12 +49,9 @@ const loginWithGoogle: RequestHandler = async (req: Request, res: Response) => {
             .send({
                 status: IResponseStatus.Success,
                 message: "Welcome! You have successfully logged into your account",
-                data: {
-                    ...rest,
-                    accessToken,
-                },
+                data: { ...rest, accessToken },
             });
-    } catch (error: any) {
+    } catch (error) {
         console.error("Google login error:", error);
         return res.status(500).send({
             status: IResponseStatus.Error,
@@ -64,21 +62,17 @@ const loginWithGoogle: RequestHandler = async (req: Request, res: Response) => {
 
 const logoutUser: RequestHandler = async (req: Request, res: Response) => {
     try {
-        const refreshToken = req.cookies?.refreshToken;
+        const refreshToken = req.cookies?.refreshToken as string | undefined;
 
         if (refreshToken) {
-            const user = await Users.findOne({ refreshToken: refreshToken });
+            const user = await Users.findOne({ refreshToken });
             if (user) {
-                user.refreshToken = user.refreshToken.filter((token) => token !== refreshToken);
+                user.refreshToken = user.refreshToken.filter((t) => t !== refreshToken);
                 await user.save();
             }
         }
 
-        res.clearCookie("refreshToken", {
-            httpOnly: true,
-            secure: true,
-            sameSite: "none",
-        });
+        res.clearCookie("refreshToken", { httpOnly: true, secure: true, sameSite: "none" });
 
         return res.status(200).send({
             status: IResponseStatus.Success,
@@ -93,10 +87,8 @@ const logoutUser: RequestHandler = async (req: Request, res: Response) => {
     }
 };
 
-//#region Refresh Token
-
 const refreshToken: RequestHandler = async (req: Request, res: Response, _next: NextFunction) => {
-    const cookieRefreshToken = req.cookies?.refreshToken;
+    const cookieRefreshToken = req.cookies?.refreshToken as string | undefined;
 
     if (!cookieRefreshToken) {
         return res.status(200).send({
@@ -106,9 +98,9 @@ const refreshToken: RequestHandler = async (req: Request, res: Response, _next: 
     }
 
     try {
-        const decoded = jwt.verify(cookieRefreshToken, process.env.JWT_SECRET!) as any;
+        const decoded = jwt.verify(cookieRefreshToken, process.env.JWT_SECRET!) as { id?: string };
 
-        if (!decoded || !decoded.id) {
+        if (!decoded?.id) {
             return res.status(200).send({
                 status: IResponseStatus.Error,
                 message: "Invalid session token. Please log in again",
@@ -136,11 +128,9 @@ const refreshToken: RequestHandler = async (req: Request, res: Response, _next: 
         return res.status(200).send({
             status: IResponseStatus.Success,
             message: "Access token refreshed successfully",
-            data: {
-                accessToken: newAccessToken,
-            },
+            data: { accessToken: newAccessToken },
         });
-    } catch (error: any) {
+    } catch (error) {
         console.error("Refresh token error:", error);
         return res.status(401).send({
             status: IResponseStatus.Error,
@@ -149,7 +139,7 @@ const refreshToken: RequestHandler = async (req: Request, res: Response, _next: 
     }
 };
 
-const verifyAccessToken: RequestHandler = async (req: AuthenticatedRequest, res: Response) => {
+const verifyAccessToken: RequestHandler = async (_req: AuthenticatedRequest, res: Response) => {
     return res.status(200).send({
         status: IResponseStatus.Success,
         message: "Token is valid",

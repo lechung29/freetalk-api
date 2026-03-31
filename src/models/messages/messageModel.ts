@@ -1,6 +1,15 @@
 /** @format */
 
-import mongoose, { Schema, type InferSchemaType } from "mongoose";
+import mongoose, { Schema, Document } from "mongoose";
+
+export const MESSAGE_TYPES = ["text", "image", "file", "call"] as const;
+export type MessageTypeValue = (typeof MESSAGE_TYPES)[number];
+
+export const CALL_MESSAGE_STATUSES = ["ended", "rejected", "missed", "cancelled", "offline"] as const;
+export type CallMessageStatus = (typeof CALL_MESSAGE_STATUSES)[number];
+
+export const CALL_TYPES = ["audio", "video"] as const;
+export type CallType = (typeof CALL_TYPES)[number];
 
 export enum MessageType {
     Text = "text",
@@ -8,32 +17,34 @@ export enum MessageType {
     File = "file",
     Call = "call",
 }
-
-export type CallMessageStatus = "ended" | "rejected" | "missed" | "cancelled" | "offline";
-
 export interface ICallMessageMeta {
     status: CallMessageStatus;
-    callType: "audio" | "video";
+    callType: CallType;
     durationSeconds: number;
-    startedAt?: Date;
-    endedAt?: Date;
+    startedAt?: Date | null;
+    endedAt?: Date | null;
     initiatorId?: mongoose.Types.ObjectId | null;
     recipientId?: mongoose.Types.ObjectId | null;
     endedBy?: mongoose.Types.ObjectId | null;
 }
 
+export interface IReaction {
+    emoji: string;
+    userId: mongoose.Types.ObjectId;
+}
+
 export interface IMessage extends Document {
     conversationId: mongoose.Types.ObjectId;
     sender: mongoose.Types.ObjectId;
-    type: MessageType;
+    type: MessageTypeValue;
     content: string;
     readBy: mongoose.Types.ObjectId[];
     isDeleted: boolean;
-    deletedAt?: Date;
-    editedAt?: Date;
+    deletedAt?: Date | null;
+    editedAt?: Date | null;
     isPinned: boolean;
-    replyTo?: mongoose.Types.ObjectId;
-    reactions: { emoji: string; userId: mongoose.Types.ObjectId }[];
+    replyTo?: mongoose.Types.ObjectId | null;
+    reactions: IReaction[];
     callMeta?: ICallMessageMeta | null;
     createdAt: Date;
     updatedAt: Date;
@@ -55,8 +66,8 @@ const messageSchema = new Schema<IMessage>(
         },
         type: {
             type: String,
-            enum: MessageType,
-            default: MessageType.Text,
+            enum: MESSAGE_TYPES,
+            default: "text" satisfies MessageTypeValue,
         },
         content: {
             type: String,
@@ -65,7 +76,7 @@ const messageSchema = new Schema<IMessage>(
         readBy: [
             {
                 type: Schema.Types.ObjectId,
-                ref: "User",
+                ref: "Users",
                 default: [],
             },
         ],
@@ -75,9 +86,11 @@ const messageSchema = new Schema<IMessage>(
         },
         deletedAt: {
             type: Date,
+            default: null,
         },
         editedAt: {
             type: Date,
+            default: null,
         },
         isPinned: {
             type: Boolean,
@@ -97,26 +110,20 @@ const messageSchema = new Schema<IMessage>(
         callMeta: {
             status: {
                 type: String,
-                enum: ["ended", "rejected", "missed", "cancelled", "offline"],
+                enum: [...CALL_MESSAGE_STATUSES, null],
                 default: null,
             },
             callType: {
                 type: String,
-                enum: ["audio", "video"],
+                enum: [...CALL_TYPES, null],
                 default: null,
             },
             durationSeconds: {
                 type: Number,
                 default: 0,
             },
-            startedAt: {
-                type: Date,
-                default: null,
-            },
-            endedAt: {
-                type: Date,
-                default: null,
-            },
+            startedAt: { type: Date, default: null },
+            endedAt: { type: Date, default: null },
             initiatorId: {
                 type: Schema.Types.ObjectId,
                 ref: "Users",
@@ -134,14 +141,11 @@ const messageSchema = new Schema<IMessage>(
             },
         },
     },
-    {
-        timestamps: true,
-    },
+    { timestamps: true },
 );
 
 messageSchema.index({ conversationId: 1, createdAt: 1 });
 
-type MessageDocument = InferSchemaType<typeof messageSchema>;
-const Messages = mongoose.model<MessageDocument>("Messages", messageSchema);
+const Messages = mongoose.model<IMessage>("Messages", messageSchema);
 
 export default Messages;

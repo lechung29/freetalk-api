@@ -2,14 +2,17 @@
 
 import mongoose, { Document } from "mongoose";
 
-export type NotificationType = "friend_request" | "friend_request_accepted" | "friend_request_declined" | "friend_request_cancelled" | "group_invite" | "message" | "system";
+// ─── Constants (shared với Zod schemas) ──────────────────────────────────────
+export const NOTIFICATION_TYPES = ["friend_request", "friend_request_accepted", "friend_request_declined", "friend_request_cancelled", "group_invite", "message", "system"] as const;
+
+export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
 
 export interface INotification extends Document {
     recipient: mongoose.Types.ObjectId;
     type: NotificationType;
     title: string;
     body: string;
-    data?: Record<string, any>;
+    data?: Record<string, unknown>;
     isRead: boolean;
     createdAt: Date;
     updatedAt: Date;
@@ -25,6 +28,7 @@ const notificationSchema = new mongoose.Schema<INotification>(
         },
         type: {
             type: String,
+            enum: NOTIFICATION_TYPES,
             required: true,
         },
         title: {

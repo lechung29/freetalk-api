@@ -13,27 +13,28 @@ import {
     getFriendshipStatus,
 } from "../controllers/friend/friendController.js";
 import { verifyToken } from "../middlewares/auth.js";
+import { validate } from "../middlewares/validate.js";
+import { receiverIdParamSchema, requestIdParamSchema, friendIdParamSchema, targetIdParamSchema } from "../schemas/friend.schema.js";
 
 const friendRouter = express.Router();
 
-// Tất cả routes đều cần auth
 friendRouter.use(verifyToken);
 
 // Danh sách bạn bè & requests
 friendRouter.get("/", getFriends);
 friendRouter.get("/requests/incoming", getIncomingRequests);
 friendRouter.get("/requests/outgoing", getOutgoingRequests);
-friendRouter.get("/status/:targetId", getFriendshipStatus);
+friendRouter.get("/status/:targetId", validate(targetIdParamSchema), getFriendshipStatus);
 
 // Gửi / hủy lời mời
-friendRouter.post("/request/:receiverId", sendFriendRequest);
-friendRouter.delete("/request/:requestId/cancel", cancelFriendRequest);
+friendRouter.post("/request/:receiverId", validate(receiverIdParamSchema), sendFriendRequest);
+friendRouter.delete("/request/:requestId/cancel", validate(requestIdParamSchema), cancelFriendRequest);
 
 // Phản hồi lời mời
-friendRouter.patch("/request/:requestId/accept", acceptFriendRequest);
-friendRouter.patch("/request/:requestId/decline", declineFriendRequest);
+friendRouter.patch("/request/:requestId/accept", validate(requestIdParamSchema), acceptFriendRequest);
+friendRouter.patch("/request/:requestId/decline", validate(requestIdParamSchema), declineFriendRequest);
 
 // Hủy kết bạn
-friendRouter.delete("/:friendId", removeFriend);
+friendRouter.delete("/:friendId", validate(friendIdParamSchema), removeFriend);
 
 export default friendRouter;

@@ -1,6 +1,6 @@
 /** @format */
 
-import Notifications, { type NotificationType } from "../models/notifications/NotificationModel.js";
+import Notifications, { type NotificationType } from "../models/notifications/notificationModel.js";
 import { emitToUser } from "../socket/socketInstance.js";
 
 // Helper: lưu notification vào DB, sau đó emit socket real-time.

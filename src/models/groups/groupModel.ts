@@ -2,8 +2,11 @@
 
 import mongoose, { Document } from "mongoose";
 
-export type GroupMemberRole = "owner" | "admin" | "member";
-export type GroupMemberStatus = "pending" | "accepted" | "declined";
+export const GROUP_MEMBER_ROLES = ["owner", "admin", "member"] as const;
+export type GroupMemberRole = (typeof GROUP_MEMBER_ROLES)[number];
+
+export const GROUP_MEMBER_STATUSES = ["pending", "accepted", "declined"] as const;
+export type GroupMemberStatus = (typeof GROUP_MEMBER_STATUSES)[number];
 
 export interface IGroupMember {
     user: mongoose.Types.ObjectId;
@@ -33,13 +36,13 @@ const groupMemberSchema = new mongoose.Schema<IGroupMember>(
         },
         role: {
             type: String,
-            enum: ["owner", "admin", "member"],
-            default: "member",
+            enum: GROUP_MEMBER_ROLES,
+            default: "member" satisfies GroupMemberRole,
         },
         status: {
             type: String,
-            enum: ["pending", "accepted", "declined"],
-            default: "pending",
+            enum: GROUP_MEMBER_STATUSES,
+            default: "pending" satisfies GroupMemberStatus,
         },
         invitedBy: {
             type: mongoose.Schema.Types.ObjectId,

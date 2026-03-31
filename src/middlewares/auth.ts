@@ -24,7 +24,6 @@ export const verifyToken = async (req: AuthenticatedRequest, res: Response, next
         const payload = jwt.verify(token, process.env.JWT_SECRET!);
         const userInfo = payload as IUserInfo;
 
-        // Always fetch timezone from database to ensure latest value
         const user = await Users.findById(userInfo.id).select("timezone").lean();
         if (user) {
             userInfo.timezone = user.timezone;

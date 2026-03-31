@@ -2,15 +2,13 @@
 
 import type { Response, RequestHandler } from "express";
 import { IResponseStatus } from "../../models/users/usersModel.js";
-import Notifications from "../../models/notifications/NotificationModel.js";
+import Notifications from "../../models/notifications/notificationModel.js";
 import { convertToUserTimezone } from "../../utils/timezoneConverter.js";
 import type { AuthenticatedRequest } from "../../middlewares/auth.js";
 
-// GET /api/v1/notifications
-// Lấy tất cả notification của user đang đăng nhập (mới nhất trước, tối đa 50)
 const getNotifications: RequestHandler = async (req: AuthenticatedRequest, res: Response) => {
     const userId = req.user?.id;
-    const timezone = req.user?.timezone;
+    const timezone = req.user?.timezone ?? "";
 
     try {
         const notifications = await Notifications.find({ recipient: userId }).sort({ createdAt: -1 }).limit(50).lean();
@@ -25,7 +23,7 @@ const getNotifications: RequestHandler = async (req: AuthenticatedRequest, res: 
                 body: n.body,
                 data: n.data,
                 isRead: n.isRead,
-                createdAt: convertToUserTimezone(n.createdAt, timezone || ""),
+                createdAt: convertToUserTimezone(n.createdAt, timezone),
             })),
         });
     } catch (error) {
@@ -34,8 +32,6 @@ const getNotifications: RequestHandler = async (req: AuthenticatedRequest, res: 
     }
 };
 
-// PATCH /api/v1/notifications/:id/read
-// Đánh dấu 1 notification là đã đọc
 const markAsRead: RequestHandler = async (req: AuthenticatedRequest, res: Response) => {
     const userId = req.user?.id;
     const { id } = req.params;
@@ -50,8 +46,6 @@ const markAsRead: RequestHandler = async (req: AuthenticatedRequest, res: Respon
     }
 };
 
-// PATCH /api/v1/notifications/read-all
-// Đánh dấu tất cả là đã đọc
 const markAllAsRead: RequestHandler = async (req: AuthenticatedRequest, res: Response) => {
     const userId = req.user?.id;
 
@@ -65,8 +59,6 @@ const markAllAsRead: RequestHandler = async (req: AuthenticatedRequest, res: Res
     }
 };
 
-// DELETE /api/v1/notifications/:id
-// Xóa 1 notification
 const deleteNotification: RequestHandler = async (req: AuthenticatedRequest, res: Response) => {
     const userId = req.user?.id;
     const { id } = req.params;
@@ -81,8 +73,6 @@ const deleteNotification: RequestHandler = async (req: AuthenticatedRequest, res
     }
 };
 
-// DELETE /api/v1/notifications
-// Xóa tất cả notification của user
 const clearAllNotifications: RequestHandler = async (req: AuthenticatedRequest, res: Response) => {
     const userId = req.user?.id;
 
