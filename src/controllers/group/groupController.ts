@@ -6,6 +6,7 @@ import { IResponseStatus } from "../../models/users/usersModel.js";
 import Users from "../../models/users/usersModel.js";
 import Groups from "../../models/groups/groupModel.js";
 import { saveAndEmitNotification } from "../../utils/notification.js";
+import mongoose from "mongoose";
 
 const objectIdRegex = /^[0-9a-fA-F]{24}$/;
 
@@ -74,7 +75,7 @@ const createGroup: RequestHandler = async (req: AuthenticatedRequest, res: Respo
 
         const group = await Groups.create({
             name: name.trim(),
-            description: description.trim(),
+            description: description?.trim(),
             avatar: avatar || null,
             owner: userId,
             members: [
@@ -266,4 +267,152 @@ const declineInvite: RequestHandler = async (req: AuthenticatedRequest, res: Res
     }
 };
 
-export { createGroup, getMyGroups, getPendingInvites, acceptInvite, declineInvite };
+// POST /api/v1/groups/:groupId/invite — owner/admin mời thêm thành viên
+const inviteMembers: RequestHandler = async (req: AuthenticatedRequest, res: Response) => {
+    const userId = req.user?.id;
+    const { groupId } = req.params;
+    const { userIds = [] } = req.body as { userIds?: string[] };
+
+    if (!groupId || !objectIdRegex.test(groupId)) {
+        return res.status(400).send({ status: IResponseStatus.Error, message: "Invalid group ID" });
+    }
+
+    try {
+        const group = await Groups.findById(groupId);
+        if (!group) {
+            return res.status(404).send({ status: IResponseStatus.Error, message: "Group not found" });
+        }
+
+        const requester = group.members.find((m) => m.user.toString() === userId && m.status === "accepted");
+        if (!requester || (requester.role !== "owner" && requester.role !== "admin")) {
+            return res.status(403).send({ status: IResponseStatus.Error, message: "Only owner or admin can invite members" });
+        }
+
+        const validIds = uniq(userIds).filter((id) => objectIdRegex.test(id) && id !== userId);
+        const existingIds = group.members.map((m) => m.user.toString());
+        const newIds = validIds.filter((id) => !existingIds.includes(id));
+
+        const acceptedCount = group.members.filter((m) => m.status === "accepted").length;
+        if (acceptedCount + newIds.length > 50) {
+            return res.status(400).send({ status: IResponseStatus.Error, message: "Group would exceed 50 members" });
+        }
+
+        const inviter = await Users.findById(userId).select("username").lean();
+        const inviterName = (inviter as any)?.username ?? "Someone";
+
+        for (const inviteId of newIds) {
+            group.members.push({
+                user: new mongoose.Types.ObjectId(inviteId),
+                role: "member",
+                status: "pending",
+                invitedBy: new mongoose.Types.ObjectId(userId),
+                invitedAt: new Date(),
+                respondedAt: null,
+            } as any);
+
+            await saveAndEmitNotification({
+                recipientId: inviteId,
+                type: "group_invite",
+                title: "Group invite",
+                body: `${inviterName} invited you to join ${group.name}`,
+                data: {
+                    groupId: group._id.toString(),
+                    groupName: group.name,
+                    groupAvatar: group.avatar || null,
+                    inviterId: userId,
+                    inviterName,
+                    memberCount: acceptedCount,
+                },
+            });
+        }
+
+        await group.save();
+        await populateGroup(group);
+
+        return res.status(200).send({
+            status: IResponseStatus.Success,
+            message: `Invited ${newIds.length} member(s)`,
+            data: group.toObject(),
+        });
+    } catch (error) {
+        console.error("inviteMembers error:", error);
+        return res.status(500).send({ status: IResponseStatus.Error, message: "A system error occurred" });
+    }
+};
+
+// DELETE /api/v1/groups/:groupId  — chỉ owner mới được xóa
+const deleteGroup: RequestHandler = async (req: AuthenticatedRequest, res: Response) => {
+    const userId = req.user?.id;
+    const { groupId } = req.params;
+
+    if (!groupId || !objectIdRegex.test(groupId)) {
+        return res.status(400).send({ status: IResponseStatus.Error, message: "Invalid group ID" });
+    }
+
+    try {
+        const group = await Groups.findById(groupId);
+        if (!group) {
+            return res.status(404).send({ status: IResponseStatus.Error, message: "Group not found" });
+        }
+
+        if (group.owner.toString() !== userId) {
+            return res.status(403).send({ status: IResponseStatus.Error, message: "Only the owner can delete this group" });
+        }
+
+        await Groups.findByIdAndDelete(groupId);
+
+        return res.status(200).send({
+            status: IResponseStatus.Success,
+            message: "Group deleted successfully",
+        });
+    } catch (error) {
+        console.error("deleteGroup error:", error);
+        return res.status(500).send({ status: IResponseStatus.Error, message: "A system error occurred" });
+    }
+};
+
+// PATCH /api/v1/groups/:groupId/members/:memberId/promote  — chỉ owner promote lên admin
+const promoteMember: RequestHandler = async (req: AuthenticatedRequest, res: Response) => {
+    const userId = req.user?.id;
+    const { groupId, memberId } = req.params;
+
+    if (!groupId || !objectIdRegex.test(groupId) || !memberId || !objectIdRegex.test(memberId)) {
+        return res.status(400).send({ status: IResponseStatus.Error, message: "Invalid ID" });
+    }
+
+    try {
+        const group = await Groups.findById(groupId);
+        if (!group) {
+            return res.status(404).send({ status: IResponseStatus.Error, message: "Group not found" });
+        }
+
+        if (group.owner.toString() !== userId) {
+            return res.status(403).send({ status: IResponseStatus.Error, message: "Only the owner can promote members" });
+        }
+
+        const member = group.members.find((m) => m.user.toString() === memberId && m.status === "accepted");
+        if (!member) {
+            return res.status(404).send({ status: IResponseStatus.Error, message: "Member not found in group" });
+        }
+
+        if (member.role === "owner") {
+            return res.status(400).send({ status: IResponseStatus.Error, message: "Cannot change owner's role" });
+        }
+
+        member.role = member.role === "admin" ? "member" : "admin";
+        await group.save();
+
+        await populateGroup(group);
+
+        return res.status(200).send({
+            status: IResponseStatus.Success,
+            message: `Member ${member.role === "admin" ? "promoted to admin" : "demoted to member"}`,
+            data: group.toObject(),
+        });
+    } catch (error) {
+        console.error("promoteMember error:", error);
+        return res.status(500).send({ status: IResponseStatus.Error, message: "A system error occurred" });
+    }
+};
+
+export { createGroup, getMyGroups, getPendingInvites, acceptInvite, declineInvite, deleteGroup, promoteMember, inviteMembers };
