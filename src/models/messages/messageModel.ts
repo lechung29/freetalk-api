@@ -2,7 +2,7 @@
 
 import mongoose, { Schema, Document } from "mongoose";
 
-export const MESSAGE_TYPES = ["text", "image", "file", "call"] as const;
+export const MESSAGE_TYPES = ["text", "image", "file", "call", "system"] as const;
 export type MessageTypeValue = (typeof MESSAGE_TYPES)[number];
 
 export const CALL_MESSAGE_STATUSES = ["ended", "rejected", "missed", "cancelled", "offline"] as const;
@@ -16,6 +16,7 @@ export enum MessageType {
     Image = "image",
     File = "file",
     Call = "call",
+    System = "system",
 }
 export interface ICallMessageMeta {
     status: CallMessageStatus;
@@ -35,7 +36,7 @@ export interface IReaction {
 
 export interface IMessage extends Document {
     conversationId: mongoose.Types.ObjectId;
-    sender: mongoose.Types.ObjectId;
+    sender: mongoose.Types.ObjectId | null; // null cho system messages
     type: MessageTypeValue;
     content: string;
     readBy: mongoose.Types.ObjectId[];
@@ -61,7 +62,8 @@ const messageSchema = new Schema<IMessage>(
         sender: {
             type: Schema.Types.ObjectId,
             ref: "Users",
-            required: true,
+            required: false, // null cho system messages
+            default: null,
             index: true,
         },
         type: {

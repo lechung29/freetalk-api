@@ -6,6 +6,7 @@ import FriendRequests, { FriendRequestStatus } from "../../models/friendRequests
 import Users, { IResponseStatus, IUserStatus } from "../../models/users/usersModel.js";
 import type { AuthenticatedRequest } from "../../middlewares/auth.js";
 import { emitToUser } from "../../socket/socketInstance.js";
+import Conversations from "../../models/conversations/conversationModel.js";
 
 function buildNotification(type: string, title: string, body: string, data: Record<string, unknown> = {}) {
     return { type, title, body, data, isRead: false, createdAt: new Date().toISOString() };
@@ -109,11 +110,22 @@ const acceptFriendRequest: RequestHandler = async (req: AuthenticatedRequest, re
 
         const accepter = await Users.findById(userId).select("-password -refreshToken").lean();
 
-        emitToUser(
-            request.sender.toString(),
-            "notification:new",
-            buildNotification("friend_request_accepted", "Friend Request Accepted", `${accepter?.username} accepted your friend request`, { accepter }),
-        );
+        // Tạo conversation rỗng nếu chưa có (upsert)
+        const senderId = request.sender.toString();
+        const receiverId = userId!;
+        const existing = await Conversations.findOne({
+            participants: { $all: [senderId, receiverId], $size: 2 },
+            isGroup: { $ne: true },
+        });
+        if (!existing) {
+            await Conversations.create({ participants: [senderId, receiverId] });
+        }
+
+        emitToUser(senderId, "notification:new", buildNotification("friend_request_accepted", "Friend Request Accepted", `${accepter?.username} accepted your friend request`, { accepter }));
+
+        // Notify cả 2 reload chat list
+        emitToUser(senderId, "conversation:list_updated", {});
+        emitToUser(receiverId, "conversation:list_updated", {});
 
         return res.status(200).send({
             status: IResponseStatus.Success,

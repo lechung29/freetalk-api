@@ -3,7 +3,17 @@
 import mongoose, { Document } from "mongoose";
 
 // ─── Constants (shared với Zod schemas) ──────────────────────────────────────
-export const NOTIFICATION_TYPES = ["friend_request", "friend_request_accepted", "friend_request_declined", "friend_request_cancelled", "group_invite", "message", "system"] as const;
+export const NOTIFICATION_TYPES = [
+    "friend_request",
+    "friend_request_accepted",
+    "friend_request_declined",
+    "friend_request_cancelled",
+    "friend_removed",
+    "group_invite",
+    "group_member_removed",
+    "message",
+    "system",
+] as const;
 
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
 

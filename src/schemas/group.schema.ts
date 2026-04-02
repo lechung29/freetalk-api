@@ -38,3 +38,14 @@ export const memberActionSchema = z.object({
 
 export type CreateGroupBody = z.infer<typeof createGroupSchema>["body"];
 export type InviteMembersBody = z.infer<typeof inviteMembersSchema>["body"];
+
+export const updateGroupSchema = z.object({
+    params: z.object({ groupId: objectIdSchema }),
+    body: z.object({
+        name: z.string().min(1).max(100).trim().optional(),
+        description: z.string().max(500).optional(),
+        avatar: z.string().url().nullable().optional(),
+    }),
+});
+
+export type UpdateGroupBody = z.infer<typeof updateGroupSchema>["body"];
