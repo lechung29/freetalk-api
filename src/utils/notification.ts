@@ -1,6 +1,6 @@
 /** @format */
 
-import Notifications, { NotificationType } from "../models/notifications/notificationModel";
+import Notifications, { type NotificationType } from "../models/notifications/notificationModel";
 import { emitToUser } from "../socket/socketInstance";
 
 // Helper: lưu notification vào DB, sau đó emit socket real-time.
@@ -11,7 +11,7 @@ interface NotificationPayload {
     type: NotificationType;
     title: string;
     body: string;
-    data?: Record<string, any>;
+    data?: Record<string, unknown>;
 }
 
 export async function saveAndEmitNotification(payload: NotificationPayload): Promise<void> {

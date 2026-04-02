@@ -2,21 +2,31 @@
 
 import type { Response, RequestHandler } from "express";
 import { AuthenticatedRequest } from "../../middlewares/auth";
-import Notifications from "../../models/notifications/notificationModel";
+import Notifications, { type NotificationType } from "../../models/notifications/notificationModel";
 import { IResponseStatus } from "../../models/users/usersModel";
 import { convertToUserTimezone } from "../../utils/timezoneConverter";
+
+type NotificationListItem = {
+    _id: { toString(): string };
+    type: NotificationType;
+    title: string;
+    body: string;
+    data?: Record<string, unknown>;
+    isRead: boolean;
+    createdAt: Date | string;
+};
 
 const getNotifications: RequestHandler = async (req: AuthenticatedRequest, res: Response) => {
     const userId = req.user?.id;
     const timezone = req.user?.timezone ?? "";
 
     try {
-        const notifications = await Notifications.find({ recipient: userId }).sort({ createdAt: -1 }).limit(50).lean();
+        const notifications = (await Notifications.find({ recipient: userId }).sort({ createdAt: -1 }).limit(50).lean()) as NotificationListItem[];
 
         return res.status(200).send({
             status: IResponseStatus.Success,
             message: "Notifications retrieved successfully",
-            data: notifications.map((n) => ({
+            data: notifications.map((n: NotificationListItem) => ({
                 id: n._id.toString(),
                 type: n.type,
                 title: n.title,
