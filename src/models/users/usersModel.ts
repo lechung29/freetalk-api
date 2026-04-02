@@ -1,6 +1,6 @@
 /** @format */
 
-import mongoose, { Document } from "mongoose";
+import mongoose, { type Document } from "mongoose";
 
 export enum IResponseStatus {
     Error = 0,
