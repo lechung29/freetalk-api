@@ -1,9 +1,9 @@
 /** @format */
 
 import type { Response, RequestHandler } from "express";
-import Users, { IResponseStatus } from "../../models/users/usersModel.js";
-import type { AuthenticatedRequest } from "../../middlewares/auth.js";
-import { emitToUser } from "../../socket/socketInstance.js";
+import Users, { IResponseStatus } from "../../models/users/usersModel";
+import type { AuthenticatedRequest } from "../../middlewares/auth";
+import { emitToUser } from "../../socket/socketInstance";
 
 const blockUser: RequestHandler = async (req: AuthenticatedRequest, res: Response) => {
     const userId = req.user?.id;

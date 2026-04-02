@@ -1,20 +1,11 @@
 /** @format */
 
 import express from "express";
-import {
-    sendFriendRequest,
-    acceptFriendRequest,
-    declineFriendRequest,
-    cancelFriendRequest,
-    removeFriend,
-    getFriends,
-    getIncomingRequests,
-    getOutgoingRequests,
-    getFriendshipStatus,
-} from "../controllers/friend/friendController.js";
-import { verifyToken } from "../middlewares/auth.js";
-import { validate } from "../middlewares/validate.js";
-import { receiverIdParamSchema, requestIdParamSchema, friendIdParamSchema, targetIdParamSchema } from "../schemas/friend.schema.js";
+import { verifyToken } from "../middlewares/auth";
+import { acceptFriendRequest, cancelFriendRequest, declineFriendRequest, getFriends, getFriendshipStatus, getIncomingRequests, getOutgoingRequests, removeFriend, sendFriendRequest } from "../controllers/friend/friendController";
+import { validate } from "../middlewares/validate";
+import { friendIdParamSchema, receiverIdParamSchema, requestIdParamSchema, targetIdParamSchema } from "../schemas/friend.schema";
+
 
 const friendRouter = express.Router();
 

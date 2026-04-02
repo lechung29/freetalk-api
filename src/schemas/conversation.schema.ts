@@ -1,7 +1,8 @@
 /** @format */
 
 import { z } from "zod";
-import { objectIdSchema } from "./common.schema.js";
+import { objectIdSchema } from "./common.schema";
+
 
 export const getOrCreateConversationSchema = z.object({
     body: z.object({

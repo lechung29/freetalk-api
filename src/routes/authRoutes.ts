@@ -1,10 +1,10 @@
 /** @format */
 
 import express from "express";
-import { loginWithGoogle, logoutUser, refreshToken, verifyAccessToken } from "../controllers/auth/authController.js";
-import { verifyToken } from "../middlewares/auth.js";
-import { validate } from "../middlewares/validate.js";
-import { loginWithGoogleSchema } from "../schemas/auth.schema.js";
+import { loginWithGoogleSchema } from "../schemas/auth.schema";
+import { validate } from "../middlewares/validate";
+import { loginWithGoogle, logoutUser, refreshToken, verifyAccessToken } from "../controllers/auth/authController";
+import { verifyToken } from "../middlewares/auth";
 
 const authRouter = express.Router();
 

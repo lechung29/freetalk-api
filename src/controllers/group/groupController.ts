@@ -1,16 +1,16 @@
 /** @format */
 
 import type { Response, RequestHandler } from "express";
-import type { AuthenticatedRequest } from "../../middlewares/auth.js";
-import { IResponseStatus } from "../../models/users/usersModel.js";
-import Users from "../../models/users/usersModel.js";
-import Groups from "../../models/groups/groupModel.js";
-import { saveAndEmitNotification } from "../../utils/notification.js";
-import { emitToUser, getIO } from "../../socket/socketInstance.js";
-import Conversations from "../../models/conversations/conversationModel.js";
-import Messages from "../../models/messages/messageModel.js";
+import type { AuthenticatedRequest } from "../../middlewares/auth";
+import { IResponseStatus } from "../../models/users/usersModel";
+import Users from "../../models/users/usersModel";
+import Groups from "../../models/groups/groupModel";
+import { saveAndEmitNotification } from "../../utils/notification";
+import { emitToUser, getIO } from "../../socket/socketInstance";
+import Conversations from "../../models/conversations/conversationModel";
+import Messages from "../../models/messages/messageModel";
 import mongoose from "mongoose";
-import type { CreateGroupBody, InviteMembersBody } from "../../schemas/group.schema.js";
+import type { CreateGroupBody, InviteMembersBody } from "../../schemas/group.schema";
 
 // ── Helper: tạo system message và broadcast tới tất cả thành viên trong room ──
 async function broadcastGroupSystemMessage(groupId: string, text: string) {

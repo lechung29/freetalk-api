@@ -1,9 +1,9 @@
 /** @format */
 
 import jwt from "jsonwebtoken";
-import { IResponseStatus, type IUserInfo } from "../models/users/usersModel.js";
+import { IResponseStatus, type IUserInfo } from "../models/users/usersModel";
 import type { NextFunction, Request, Response } from "express";
-import Users from "../models/users/usersModel.js";
+import Users from "../models/users/usersModel";
 
 export interface AuthenticatedRequest extends Request {
     user?: IUserInfo & { timezone?: string };

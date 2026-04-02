@@ -1,7 +1,7 @@
 /** @format */
 
 import { z } from "zod";
-import { objectIdSchema } from "./common.schema.js";
+import { objectIdSchema } from "./common.schema";
 
 const MAX_GROUP_MEMBERS = 50;
 

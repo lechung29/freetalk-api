@@ -1,9 +1,9 @@
 /** @format */
 
 import type { Request, Response, RequestHandler } from "express";
-import Users, { IResponseStatus, IUserStatus } from "../../models/users/usersModel.js";
-import type { AuthenticatedRequest } from "../../middlewares/auth.js";
-import type { UpdateUserBody } from "../../schemas/user.schema.js";
+import Users, { IResponseStatus, IUserStatus } from "../../models/users/usersModel";
+import type { AuthenticatedRequest } from "../../middlewares/auth";
+import type { UpdateUserBody } from "../../schemas/user.schema";
 
 const searchUsers: RequestHandler = async (req: AuthenticatedRequest, res: Response) => {
     const requesterId = req.user?.id;

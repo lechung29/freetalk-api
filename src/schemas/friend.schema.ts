@@ -1,8 +1,7 @@
 /** @format */
 
 import { z } from "zod";
-import { objectIdSchema } from "./common.schema.js";
-
+import { objectIdSchema } from "./common.schema";
 export const receiverIdParamSchema = z.object({
     params: z.object({ receiverId: objectIdSchema }),
 });

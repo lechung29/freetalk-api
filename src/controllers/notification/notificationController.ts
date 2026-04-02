@@ -1,10 +1,10 @@
 /** @format */
 
 import type { Response, RequestHandler } from "express";
-import { IResponseStatus } from "../../models/users/usersModel.js";
-import Notifications from "../../models/notifications/notificationModel.js";
-import { convertToUserTimezone } from "../../utils/timezoneConverter.js";
-import type { AuthenticatedRequest } from "../../middlewares/auth.js";
+import { AuthenticatedRequest } from "../../middlewares/auth";
+import Notifications from "../../models/notifications/notificationModel";
+import { IResponseStatus } from "../../models/users/usersModel";
+import { convertToUserTimezone } from "../../utils/timezoneConverter";
 
 const getNotifications: RequestHandler = async (req: AuthenticatedRequest, res: Response) => {
     const userId = req.user?.id;

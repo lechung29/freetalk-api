@@ -1,12 +1,12 @@
 /** @format */
 
 import express from "express";
-import { deleteUser, getUserById, searchUsers, updateUser } from "../controllers/user/userController.js";
-import { blockUser, unblockUser, getBlockStatus } from "../controllers/block/blockController.js";
-import { verifyToken } from "../middlewares/auth.js";
-import { validate } from "../middlewares/validate.js";
-import { getUserByIdSchema, searchUsersSchema, updateUserSchema } from "../schemas/user.schema.js";
-import { blockTargetParamSchema } from "../schemas/block.schema.js";
+import { deleteUser, getUserById, searchUsers, updateUser } from "../controllers/user/userController";
+import { blockUser, unblockUser, getBlockStatus } from "../controllers/block/blockController";
+import { verifyToken } from "../middlewares/auth";
+import { validate } from "../middlewares/validate";
+import { getUserByIdSchema, searchUsersSchema, updateUserSchema } from "../schemas/user.schema";
+import { blockTargetParamSchema } from "../schemas/block.schema";
 
 const userRouter = express.Router();
 

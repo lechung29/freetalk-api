@@ -3,9 +3,9 @@
 import type { NextFunction, Request, RequestHandler, Response } from "express";
 import jwt from "jsonwebtoken";
 import bcryptjs from "bcryptjs";
-import Users, { IResponseStatus, IUserStatus } from "../../models/users/usersModel.js";
-import type { AuthenticatedRequest } from "../../middlewares/auth.js";
-import type { LoginWithGoogleBody } from "../../schemas/auth.schema.js";
+import Users, { IResponseStatus, IUserStatus } from "../../models/users/usersModel";
+import type { AuthenticatedRequest } from "../../middlewares/auth";
+import type { LoginWithGoogleBody } from "../../schemas/auth.schema";
 
 const loginWithGoogle: RequestHandler = async (req: Request, res: Response) => {
     const { email, username, avatar } = req.body as LoginWithGoogleBody;

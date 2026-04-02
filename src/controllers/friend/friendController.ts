@@ -2,11 +2,11 @@
 
 import type { Response, RequestHandler } from "express";
 import mongoose from "mongoose";
-import FriendRequests, { FriendRequestStatus } from "../../models/friendRequests/friendRequestModel.js";
-import Users, { IResponseStatus, IUserStatus } from "../../models/users/usersModel.js";
-import type { AuthenticatedRequest } from "../../middlewares/auth.js";
-import { emitToUser } from "../../socket/socketInstance.js";
-import Conversations from "../../models/conversations/conversationModel.js";
+import FriendRequests, { FriendRequestStatus } from "../../models/friendRequests/friendRequestModel";
+import Users, { IResponseStatus, IUserStatus } from "../../models/users/usersModel";
+import type { AuthenticatedRequest } from "../../middlewares/auth";
+import { emitToUser } from "../../socket/socketInstance";
+import Conversations from "../../models/conversations/conversationModel";
 
 function buildNotification(type: string, title: string, body: string, data: Record<string, unknown> = {}) {
     return { type, title, body, data, isRead: false, createdAt: new Date().toISOString() };

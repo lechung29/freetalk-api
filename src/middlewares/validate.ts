@@ -2,7 +2,7 @@
 
 import type { Request, Response, NextFunction } from "express";
 import type { ZodSchema } from "zod";
-import { IResponseStatus } from "../models/users/usersModel.js";
+import { IResponseStatus } from "../models/users/usersModel";
 
 export function validate(schema: ZodSchema) {
     return (req: Request, res: Response, next: NextFunction): void => {

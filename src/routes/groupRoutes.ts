@@ -15,10 +15,10 @@ import {
     cancelInvite,
     removeMember,
     leaveGroup,
-} from "../controllers/group/groupController.js";
-import { verifyToken } from "../middlewares/auth.js";
-import { validate } from "../middlewares/validate.js";
-import { createGroupSchema, groupIdParamSchema, inviteMembersSchema, memberActionSchema } from "../schemas/group.schema.js";
+} from "../controllers/group/groupController";
+import { verifyToken } from "../middlewares/auth";
+import { validate } from "../middlewares/validate";
+import { createGroupSchema, groupIdParamSchema, inviteMembersSchema, memberActionSchema } from "../schemas/group.schema";
 
 const groupRouter = express.Router();
 

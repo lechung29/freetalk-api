@@ -1,10 +1,10 @@
 /** @format */
 
 import express from "express";
-import { getNotifications, markAsRead, markAllAsRead, deleteNotification, clearAllNotifications } from "../controllers/notification/notificationController.js";
-import { verifyToken } from "../middlewares/auth.js";
-import { validate } from "../middlewares/validate.js";
-import { notificationIdParamSchema } from "../schemas/notification.schema.js";
+import { getNotifications, markAsRead, markAllAsRead, deleteNotification, clearAllNotifications } from "../controllers/notification/notificationController";
+import { verifyToken } from "../middlewares/auth";
+import { validate } from "../middlewares/validate";
+import { notificationIdParamSchema } from "../schemas/notification.schema";
 
 const notificationRouter = express.Router();
 

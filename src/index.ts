@@ -7,15 +7,15 @@ import cookieParser from "cookie-parser";
 import bodyParser from "body-parser";
 import { createServer } from "http";
 import { Server as SocketIOServer } from "socket.io";
-import { connectDB } from "./config/database.js";
-import authRouter from "./routes/authRoutes.js";
-import userRouter from "./routes/userRoutes.js";
-import friendRouter from "./routes/friendRoutes.js";
-import conversationRouter from "./routes/conversationRoutes.js";
-import notificationRouter from "./routes/notificationRoutes.js";
-import { initSocket } from "./socket/socketHandler.js";
-import { setIO } from "./socket/socketInstance.js";
-import groupRouter from "./routes/groupRoutes.js";
+import { setIO } from "./socket/socketInstance";
+import { connectDB } from "./config/database";
+import groupRouter from "./routes/groupRoutes";
+import authRouter from "./routes/authRoutes";
+import userRouter from "./routes/userRoutes";
+import friendRouter from "./routes/friendRoutes";
+import conversationRouter from "./routes/conversationRoutes";
+import notificationRouter from "./routes/notificationRoutes";
+import { initSocket } from "./socket/socketHandler";
 
 dotenv.config();
 

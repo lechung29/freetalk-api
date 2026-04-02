@@ -2,11 +2,11 @@
 
 import { Server as SocketIOServer, Socket } from "socket.io";
 import jwt from "jsonwebtoken";
-import Messages, { MessageType } from "../models/messages/messageModel.js";
-import Conversations from "../models/conversations/conversationModel.js";
-import FriendRequests, { FriendRequestStatus } from "../models/friendRequests/friendRequestModel.js";
-import { decryptMessageDocument, buildEncryptedMessageContent, type IMessageAttachment } from "../utils/messageCrypto.js";
-import Users from "../models/users/usersModel.js";
+import { buildEncryptedMessageContent, decryptMessageDocument, IMessageAttachment } from "../utils/messageCrypto";
+import Conversations from "../models/conversations/conversationModel";
+import FriendRequests, { FriendRequestStatus } from "../models/friendRequests/friendRequestModel";
+import Messages, { MessageType } from "../models/messages/messageModel";
+import Users from "../models/users/usersModel";
 
 // ✅ FIX: Map userId → Map<socketId, socket> để track tất cả connections
 const onlineUsers = new Map<string, Map<string, Socket>>();

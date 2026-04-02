@@ -1,7 +1,7 @@
 /** @format */
 
-import Notifications, { type NotificationType } from "../models/notifications/notificationModel.js";
-import { emitToUser } from "../socket/socketInstance.js";
+import Notifications, { NotificationType } from "../models/notifications/notificationModel";
+import { emitToUser } from "../socket/socketInstance";
 
 // Helper: lưu notification vào DB, sau đó emit socket real-time.
 // Nếu user offline → chỉ lưu DB, khi online lại sẽ fetch.

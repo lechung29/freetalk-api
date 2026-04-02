@@ -2,15 +2,15 @@
 
 import type { Response, RequestHandler } from "express";
 import mongoose from "mongoose";
-import Conversations from "../../models/conversations/conversationModel.js";
-import Messages, { MessageType } from "../../models/messages/messageModel.js";
-import FriendRequests, { FriendRequestStatus } from "../../models/friendRequests/friendRequestModel.js";
-import Users, { IResponseStatus } from "../../models/users/usersModel.js";
-import type { AuthenticatedRequest } from "../../middlewares/auth.js";
-import { decryptMessageDocument } from "../../utils/messageCrypto.js";
-import { getIO } from "../../socket/socketInstance.js";
-import { convertTimestampsInArray, convertTimestampsInObject } from "../../utils/timezoneConverter.js";
-import type { GetOrCreateConversationBody, GetMessagesQuery } from "../../schemas/conversation.schema.js";
+import Conversations from "../../models/conversations/conversationModel";
+import Messages, { MessageType } from "../../models/messages/messageModel";
+import FriendRequests, { FriendRequestStatus } from "../../models/friendRequests/friendRequestModel";
+import Users, { IResponseStatus } from "../../models/users/usersModel";
+import type { AuthenticatedRequest } from "../../middlewares/auth";
+import { decryptMessageDocument } from "../../utils/messageCrypto";
+import { getIO } from "../../socket/socketInstance";
+import { convertTimestampsInArray, convertTimestampsInObject } from "../../utils/timezoneConverter";
+import type { GetOrCreateConversationBody, GetMessagesQuery } from "../../schemas/conversation.schema";
 
 const messagePopulate = [
     { path: "sender", select: "-password -refreshToken" },
@@ -390,7 +390,7 @@ const searchMessages: RequestHandler = async (req: AuthenticatedRequest, res: Re
     }
 };
 
-import Groups from "../../models/groups/groupModel.js";
+import Groups from "../../models/groups/groupModel";
 
 // POST /api/v1/conversations/group/:groupId
 // Lấy hoặc tạo conversation cho một nhóm

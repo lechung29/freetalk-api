@@ -1,20 +1,11 @@
 /** @format */
 
 import express from "express";
-import {
-    getOrCreateConversation,
-    getConversations,
-    getMessages,
-    markAsRead,
-    getPinnedMessages,
-    searchMessages,
-    getOrCreateGroupConversation,
-    updateNickname,
-    getMediaMessages,
-} from "../controllers/conversation/conversationController.js";
-import { verifyToken } from "../middlewares/auth.js";
-import { validate } from "../middlewares/validate.js";
-import { conversationIdParamSchema, getMessagesSchema, getOrCreateConversationSchema, searchMessagesSchema } from "../schemas/conversation.schema.js";
+import { verifyToken } from "../middlewares/auth";
+import { getConversations, getMediaMessages, getMessages, getOrCreateConversation, getOrCreateGroupConversation, getPinnedMessages, searchMessages, updateNickname } from "../controllers/conversation/conversationController";
+import { conversationIdParamSchema, getMessagesSchema, getOrCreateConversationSchema, searchMessagesSchema } from "../schemas/conversation.schema";
+import { validate } from "../middlewares/validate";
+import { markAsRead } from "../controllers/notification/notificationController";
 
 const conversationRouter = express.Router();
 
