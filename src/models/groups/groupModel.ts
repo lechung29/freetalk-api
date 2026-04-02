@@ -1,6 +1,6 @@
 /** @format */
 
-import mongoose, { Document } from "mongoose";
+import mongoose, { type Document } from "mongoose";
 
 export const GROUP_MEMBER_ROLES = ["owner", "admin", "member"] as const;
 export type GroupMemberRole = (typeof GROUP_MEMBER_ROLES)[number];
