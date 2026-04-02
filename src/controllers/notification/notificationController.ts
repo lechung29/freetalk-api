@@ -2,7 +2,7 @@
 
 import type { Response, RequestHandler } from "express";
 import { AuthenticatedRequest } from "../../middlewares/auth";
-import Notifications, { type NotificationType } from "../../models/notifications/notificationModel";
+import Notifications, { type NotificationType } from "../../models/notifications/NotificationModel";
 import { IResponseStatus } from "../../models/users/usersModel";
 import { convertToUserTimezone } from "../../utils/timezoneConverter";
 
