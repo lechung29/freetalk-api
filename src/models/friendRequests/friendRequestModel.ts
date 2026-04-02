@@ -1,6 +1,6 @@
 /** @format */
 
-import mongoose, { Document } from "mongoose";
+import mongoose, { type Document } from "mongoose";
 
 export const FRIEND_REQUEST_STATUSES = ["pending", "accepted", "declined"] as const;
 export type FriendRequestStatusValue = (typeof FRIEND_REQUEST_STATUSES)[number];

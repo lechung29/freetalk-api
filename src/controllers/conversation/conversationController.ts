@@ -5,9 +5,10 @@ import mongoose from "mongoose";
 import Conversations from "../../models/conversations/conversationModel.js";
 import Messages, { MessageType } from "../../models/messages/messageModel.js";
 import FriendRequests, { FriendRequestStatus } from "../../models/friendRequests/friendRequestModel.js";
-import { IResponseStatus } from "../../models/users/usersModel.js";
+import Users, { IResponseStatus } from "../../models/users/usersModel.js";
 import type { AuthenticatedRequest } from "../../middlewares/auth.js";
 import { decryptMessageDocument } from "../../utils/messageCrypto.js";
+import { getIO } from "../../socket/socketInstance.js";
 import { convertTimestampsInArray, convertTimestampsInObject } from "../../utils/timezoneConverter.js";
 import type { GetOrCreateConversationBody, GetMessagesQuery } from "../../schemas/conversation.schema.js";
 
@@ -98,13 +99,15 @@ const getConversations: RequestHandler = async (req: AuthenticatedRequest, res: 
             .sort({ lastMessageAt: -1, createdAt: -1 })
             .lean();
 
-        const withTimezone = conversations.map((conv) => {
+        const withTimezone = conversations.map((conv: any) => {
             const converted = convertTimestampsInObject(conv, timezone, ["createdAt", "updatedAt", "lastMessageAt"]);
-
             if (converted.lastMessage && typeof converted.lastMessage === "object") {
-                converted.lastMessage = convertTimestampsInObject(converted.lastMessage, timezone, ["createdAt", "editedAt"]);
+                converted.lastMessage = convertTimestampsInObject(decryptMessageDocument(converted.lastMessage), timezone, ["createdAt", "editedAt"]);
             }
-
+            // Convert nicknames Map → plain object
+            if (conv.nicknames instanceof Map) {
+                converted.nicknames = Object.fromEntries(conv.nicknames);
+            }
             return converted;
         });
 
@@ -255,7 +258,23 @@ const markAsRead: RequestHandler = async (req: AuthenticatedRequest, res: Respon
             });
         }
 
-        await Messages.updateMany({ conversationId, sender: { $ne: userId }, readBy: { $ne: userId } }, { $addToSet: { readBy: userId } });
+        const result = await Messages.updateMany({ conversationId, sender: { $ne: userId }, readBy: { $ne: userId } }, { $addToSet: { readBy: userId } });
+
+        // Nếu có tin nào được đánh dấu đã đọc → emit cho sender biết
+        if (result.modifiedCount > 0) {
+            const io = getIO();
+            if (io) {
+                // Lấy conversation để biết participants
+                const conv = await Conversations.findById(conversationId).select("participants").lean();
+                if (conv) {
+                    const otherParticipants = conv.participants.map((p: any) => p.toString()).filter((id: string) => id !== userId);
+                    // Emit tới những người gửi tin (đối phương) để update isRead status
+                    for (const participantId of otherParticipants) {
+                        io.to(`user:${participantId}`).emit("message:read", { conversationId, readBy: userId });
+                    }
+                }
+            }
+        }
 
         return res.status(200).send({
             status: IResponseStatus.Success,
@@ -371,4 +390,151 @@ const searchMessages: RequestHandler = async (req: AuthenticatedRequest, res: Re
     }
 };
 
-export { getOrCreateConversation, getConversations, getMessages, markAsRead, getPinnedMessages, searchMessages };
+import Groups from "../../models/groups/groupModel.js";
+
+// POST /api/v1/conversations/group/:groupId
+// Lấy hoặc tạo conversation cho một nhóm
+// Tất cả accepted member đều có quyền truy cập
+const getOrCreateGroupConversation: RequestHandler = async (req: AuthenticatedRequest, res: Response) => {
+    const userId = req.user?.id;
+    const { groupId } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(groupId!)) {
+        return res.status(400).send({ status: IResponseStatus.Error, message: "Invalid group ID" });
+    }
+
+    try {
+        const group = await Groups.findById(groupId).lean();
+        if (!group) return res.status(404).send({ status: IResponseStatus.Error, message: "Group not found" });
+
+        // Kiểm tra user có phải accepted member không
+        const isMember = group.members.some((m: any) => m.user.toString() === userId && m.status === "accepted");
+        if (!isMember) return res.status(403).send({ status: IResponseStatus.Error, message: "You are not a member of this group" });
+
+        // Tìm conversation đã có cho nhóm này
+        let conversation = await Conversations.findOne({ isGroup: true, groupId })
+            .populate("participants", "-password -refreshToken")
+            .populate({ path: "lastMessage", populate: { path: "sender", select: "-password -refreshToken" } });
+
+        if (!conversation) {
+            // Lấy tất cả accepted member ids
+            const participantIds = group.members.filter((m: any) => m.status === "accepted").map((m: any) => m.user);
+
+            const newConv = await Conversations.create({
+                participants: participantIds,
+                isGroup: true,
+                groupId: group._id,
+                lastMessage: null,
+                lastMessageAt: null,
+            });
+
+            conversation = await newConv.populate("participants", "-password -refreshToken");
+        }
+
+        return res.status(200).send({
+            status: IResponseStatus.Success,
+            data: conversation,
+        });
+    } catch (error) {
+        console.error("getOrCreateGroupConversation error:", error);
+        return res.status(500).send({ status: IResponseStatus.Error, message: "A system error occurred" });
+    }
+};
+
+// PATCH /api/v1/conversations/:conversationId/nickname
+// Đặt biệt danh cho 1 participant trong conversation
+// Body: { targetUserId, nickname }  — nickname rỗng = xóa biệt danh
+const updateNickname: RequestHandler = async (req: AuthenticatedRequest, res: Response) => {
+    const userId = req.user?.id;
+    const { conversationId } = req.params;
+    const { targetUserId, nickname } = req.body as { targetUserId: string; nickname: string };
+
+    if (!conversationId || !mongoose.Types.ObjectId.isValid(conversationId)) {
+        return res.status(400).send({ status: IResponseStatus.Error, message: "Invalid conversation ID" });
+    }
+    if (!targetUserId || !mongoose.Types.ObjectId.isValid(targetUserId)) {
+        return res.status(400).send({ status: IResponseStatus.Error, message: "Invalid targetUserId" });
+    }
+
+    try {
+        const conversation = await Conversations.findById(conversationId)
+            .populate("participants", "-password -refreshToken")
+            .populate({ path: "lastMessage", populate: { path: "sender", select: "-password -refreshToken" } });
+
+        if (!conversation) {
+            return res.status(404).send({ status: IResponseStatus.Error, message: "Conversation not found" });
+        }
+
+        // Chỉ participant mới được đặt biệt danh
+        const isParticipant = conversation.participants.some((p: any) => p._id.toString() === userId);
+        if (!isParticipant) {
+            return res.status(403).send({ status: IResponseStatus.Error, message: "Not a participant" });
+        }
+
+        // targetUserId cũng phải là participant
+        const isTargetParticipant = conversation.participants.some((p: any) => p._id.toString() === targetUserId);
+        if (!isTargetParticipant) {
+            return res.status(400).send({ status: IResponseStatus.Error, message: "Target user is not a participant" });
+        }
+
+        const trimmed = (nickname ?? "").trim();
+        if (trimmed) {
+            conversation.nicknames.set(targetUserId, trimmed);
+        } else {
+            conversation.nicknames.delete(targetUserId);
+        }
+
+        await conversation.save();
+
+        // Trả về conversation đã populate với nicknames dạng object
+        const plain = conversation.toObject() as any;
+        // Convert Map → plain object để FE parse được
+        plain.nicknames = Object.fromEntries(conversation.nicknames);
+
+        return res.status(200).send({ status: IResponseStatus.Success, data: plain });
+    } catch (error) {
+        console.error("updateNickname error:", error);
+        return res.status(500).send({ status: IResponseStatus.Error, message: "A system error occurred" });
+    }
+};
+
+// GET /api/v1/conversations/:conversationId/media
+// Trả về tất cả messages có attachment (image hoặc file), sort mới nhất
+const getMediaMessages: RequestHandler = async (req: AuthenticatedRequest, res: Response) => {
+    const userId = req.user?.id;
+    const { conversationId } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(conversationId!)) {
+        return res.status(400).send({ status: IResponseStatus.Error, message: "Invalid conversation ID" });
+    }
+
+    try {
+        const conversation = await Conversations.findById(conversationId).lean();
+        if (!conversation) {
+            return res.status(404).send({ status: IResponseStatus.Error, message: "Conversation not found" });
+        }
+
+        const isParticipant = conversation.participants.some((p: any) => p.toString() === userId);
+        if (!isParticipant) {
+            return res.status(403).send({ status: IResponseStatus.Error, message: "Not a participant" });
+        }
+
+        const mediaMessages = await Messages.find({
+            conversationId,
+            isDeleted: { $ne: true },
+            type: { $in: ["image", "file"] },
+        })
+            .sort({ createdAt: -1 })
+            .populate("sender", "-password -refreshToken")
+            .lean();
+
+        const decrypted = mediaMessages.map((m: any) => decryptMessageDocument(m));
+
+        return res.status(200).send({ status: IResponseStatus.Success, data: decrypted });
+    } catch (error) {
+        console.error("getMediaMessages error:", error);
+        return res.status(500).send({ status: IResponseStatus.Error, message: "A system error occurred" });
+    }
+};
+
+export { getOrCreateConversation, getConversations, getMessages, markAsRead, getPinnedMessages, searchMessages, getOrCreateGroupConversation, updateNickname, getMediaMessages };

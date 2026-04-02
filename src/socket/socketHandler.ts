@@ -173,14 +173,14 @@ async function emitConversationUpdates(io: SocketIOServer, conversationId: strin
     if (plainConversation.lastMessage) {
         plainConversation.lastMessage = decryptMessageDocument(plainConversation.lastMessage);
     }
+    // Convert nicknames Map → plain object
+    if (updatedConversation.nicknames instanceof Map) {
+        plainConversation.nicknames = Object.fromEntries(updatedConversation.nicknames);
+    }
 
+    // Luôn emit tới tất cả participants (kể cả đang trong room) để ChatsPage cập nhật
     for (const participantId of participantIds) {
-        const socketIds = getSocketIds(participantId);
-        const isInRoom = socketIds.some((sid) => io.sockets.sockets.get(sid)?.rooms.has(`conversation:${conversationId}`));
-
-        if (!isInRoom) {
-            io.to(`user:${participantId}`).emit("conversation:updated", plainConversation);
-        }
+        io.to(`user:${participantId}`).emit("conversation:updated", plainConversation);
     }
 }
 
@@ -295,35 +295,37 @@ export function initSocket(io: SocketIOServer) {
                 const isParticipant = conversation.participants.some((p) => p.toString() === userId);
                 if (!isParticipant) return;
 
-                const otherParticipant = conversation.participants.find((p) => p.toString() !== userId);
-                if (!otherParticipant) return;
+                // ── Group conversation: skip friend/block check ──
+                if (!(conversation as any).isGroup) {
+                    const otherParticipant = conversation.participants.find((p) => p.toString() !== userId);
+                    if (!otherParticipant) return;
 
-                const stillFriends = await FriendRequests.findOne({
-                    status: FriendRequestStatus.Accepted,
-                    $or: [
-                        { sender: userId, receiver: otherParticipant },
-                        { sender: otherParticipant, receiver: userId },
-                    ],
-                });
+                    const stillFriends = await FriendRequests.findOne({
+                        status: FriendRequestStatus.Accepted,
+                        $or: [
+                            { sender: userId, receiver: otherParticipant },
+                            { sender: otherParticipant, receiver: userId },
+                        ],
+                    });
 
-                if (!stillFriends) {
-                    socket.emit("message:error", { message: "You can only chat with your friends" });
-                    return;
-                }
+                    if (!stillFriends) {
+                        socket.emit("message:error", { message: "You can only chat with your friends" });
+                        return;
+                    }
 
-                // ── Block check ──
-                const [senderUser, recipientUser] = await Promise.all([Users.findById(userId).select("blockedUsers").lean(), Users.findById(otherParticipant).select("blockedUsers").lean()]);
+                    const [senderUser, recipientUser] = await Promise.all([Users.findById(userId).select("blockedUsers").lean(), Users.findById(otherParticipant).select("blockedUsers").lean()]);
 
-                const senderBlockedRecipient = senderUser?.blockedUsers?.some((id) => id.toString() === otherParticipant.toString()) ?? false;
-                const recipientBlockedSender = recipientUser?.blockedUsers?.some((id) => id.toString() === userId) ?? false;
+                    const senderBlockedRecipient = senderUser?.blockedUsers?.some((id) => id.toString() === otherParticipant.toString()) ?? false;
+                    const recipientBlockedSender = recipientUser?.blockedUsers?.some((id) => id.toString() === userId) ?? false;
 
-                if (senderBlockedRecipient) {
-                    socket.emit("message:error", { code: "BLOCKED_BY_YOU", message: "Bạn đã chặn người này. Hãy bỏ chặn để nhắn tin." });
-                    return;
-                }
-                if (recipientBlockedSender) {
-                    socket.emit("message:error", { code: "BLOCKED_BY_THEM", message: "Bạn không thể nhắn tin cho người này." });
-                    return;
+                    if (senderBlockedRecipient) {
+                        socket.emit("message:error", { code: "BLOCKED_BY_YOU", message: "Bạn đã chặn người này. Hãy bỏ chặn để nhắn tin." });
+                        return;
+                    }
+                    if (recipientBlockedSender) {
+                        socket.emit("message:error", { code: "BLOCKED_BY_THEM", message: "Bạn không thể nhắn tin cho người này." });
+                        return;
+                    }
                 }
 
                 const encryptedContent = buildEncryptedMessageContent(normalizedText, attachment);
@@ -347,23 +349,22 @@ export function initSocket(io: SocketIOServer) {
 
                 io.to(`conversation:${conversationId}`).emit("message:new", plainMessage);
 
-                const recipientSocketIds = getSocketIds(otherParticipant.toString());
-                const isRecipientInRoom = recipientSocketIds.some((sid) => {
-                    const recipientSocket = io.sockets.sockets.get(sid);
-                    return recipientSocket?.rooms.has(`conversation:${conversationId}`);
-                });
+                // Emit conversation:updated tới TẤT CẢ participants (kể cả đang trong room) để ChatsPage cập nhật real-time
+                const updatedConversation = await Conversations.findById(conversationId)
+                    .populate("participants", "-password -refreshToken")
+                    .populate({ path: "lastMessage", populate: { path: "sender", select: "-password -refreshToken" } });
 
-                if (!isRecipientInRoom) {
-                    const updatedConversation = await Conversations.findById(conversationId)
-                        .populate("participants", "-password -refreshToken")
-                        .populate({ path: "lastMessage", populate: { path: "sender", select: "-password -refreshToken" } });
+                if (updatedConversation) {
+                    const plainConversation = updatedConversation.toObject() as any;
+                    if (plainConversation.lastMessage) {
+                        plainConversation.lastMessage = decryptMessageDocument(plainConversation.lastMessage);
+                    }
+                    if (updatedConversation.nicknames instanceof Map) {
+                        plainConversation.nicknames = Object.fromEntries(updatedConversation.nicknames);
+                    }
 
-                    if (updatedConversation) {
-                        const plainConversation = updatedConversation.toObject() as any;
-                        if (plainConversation.lastMessage) {
-                            plainConversation.lastMessage = decryptMessageDocument(plainConversation.lastMessage);
-                        }
-                        io.to(`user:${otherParticipant}`).emit("conversation:updated", plainConversation);
+                    for (const participantId of conversation.participants) {
+                        io.to(`user:${participantId}`).emit("conversation:updated", plainConversation);
                     }
                 }
             } catch (err) {
@@ -381,7 +382,7 @@ export function initSocket(io: SocketIOServer) {
                 const message = await Messages.findById(messageId);
                 if (!message) return;
 
-                if (message.sender.toString() !== userId) {
+                if (message.sender?.toString() !== userId) {
                     socket.emit("message:error", { message: "You can only delete your own messages" });
                     return;
                 }
@@ -412,7 +413,7 @@ export function initSocket(io: SocketIOServer) {
                 const message = await Messages.findById(messageId);
                 if (!message) return;
 
-                if (message.sender.toString() !== userId) {
+                if (message.sender?.toString() !== userId) {
                     socket.emit("message:error", { message: "You can only edit your own messages" });
                     return;
                 }
@@ -529,10 +530,26 @@ export function initSocket(io: SocketIOServer) {
         });
 
         // ── message:typing ──
-        socket.on("message:typing", (payload: TypingPayload) => {
+        socket.on("message:typing", async (payload: TypingPayload) => {
             const { conversationId, isTyping } = payload;
             if (!conversationId) return;
+
+            // Emit tới những ai đang trong room (ChatContent đang mở)
             socket.to(`conversation:${conversationId}`).emit("message:typing", { userId, conversationId, isTyping });
+
+            // Emit tới tất cả participants qua user room (cho ChatsPage dù chưa mở chat)
+            try {
+                const conversation = await Conversations.findById(conversationId).select("participants").lean();
+                if (conversation) {
+                    for (const participantId of conversation.participants) {
+                        if (participantId.toString() !== userId) {
+                            io.to(`user:${participantId}`).emit("message:typing", { userId, conversationId, isTyping });
+                        }
+                    }
+                }
+            } catch {
+                /* ignore */
+            }
         });
 
         // ════════════════════════════════════════════════════════════════
